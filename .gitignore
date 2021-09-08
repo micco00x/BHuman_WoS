@@ -18,6 +18,7 @@ Build
 Config/Logs
 Config/Scenes/Includes/connect.con
 Config/Scenes/Includes/replay.con
+Install/naoqi-sdk-2.1.4.13-linux32.tar.gz
 Make/Hooks/gitpath
 Make/Linux/compile_commands.json
 Make/Linux/Nao-objects.tmp
@@ -47,3 +48,5 @@ Util/SimRobot/Make/VS20*/.vs
 Util/SimRobot/Make/VS20*/*.sln
 Util/SimRobot/Make/VS20*/*.vcxproj
 Util/SimRobot/Make/VS20*/*.vcxproj.filters
+Util/alcommon
+Util/boost
