@@ -60,9 +60,46 @@
 #include "Tools/Range.h"
 #include <algorithm>
 
+#include <iostream>
+
 MAKE_MODULE(Walk2014Generator, motionControl);
 
 static const float mmPerM = 1000.f;
+
+Walk2014Generator::Walk2014Generator() {
+  footstep_plan_.push_back(Configuration(
+      Eigen::Vector4d(0.0,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.0, -0.05, 0.0, 0.0),
+      Foot::RIGHT,
+      0.0)
+  );
+  footstep_plan_.push_back(Configuration(
+      Eigen::Vector4d(0.02,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.0,  -0.05, 0.0, 0.0),
+      Foot::LEFT,
+      0.02)
+  );
+  footstep_plan_.push_back(Configuration(
+      Eigen::Vector4d(0.02,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.04, -0.05, 0.0, 0.0),
+      Foot::RIGHT,
+      0.02)
+  );
+  footstep_plan_.push_back(Configuration(
+      Eigen::Vector4d(0.06,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.04, -0.05, 0.0, 0.0),
+      Foot::LEFT,
+      0.02)
+  );
+  footstep_plan_.push_back(Configuration(
+      Eigen::Vector4d(0.06,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.06, -0.05, 0.0, 0.0),
+      Foot::RIGHT,
+      0.02)
+  );
+
+  starting_configuration_ = footstep_plan_.front();
+}
 
 void Walk2014Generator::update(WalkGenerator& generator)
 {
@@ -126,6 +163,59 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
                                    WalkGenerator::WalkMode walkMode,
                                    const std::function<Pose3f(float phase)>& getKickFootOffset)
 {
+  std::cerr << "Walk2014Generator::update (generator.t=" << generator.t << ")" << std::endl;
+  std::string walking_state_str;
+  if (walking_state_ == WalkingState::Standing) {
+    walking_state_str = "Standing";
+  } else if (walking_state_ == WalkingState::Starting) {
+    walking_state_str = "Starting";
+  } else if (walking_state_ == WalkingState::SingleSupport) {
+    walking_state_str = "SingleSupport";
+  } else if (walking_state_ == WalkingState::DoubleSupport) {
+    walking_state_str = "DoubleSupport";
+  } else {
+    walking_state_str = "Stopping";
+  }
+
+  std::cerr << "WalkingState::" << walking_state_str << std::endl;
+  std::cerr << "\tcontrol iter=" << control_iter_ << std::endl;
+  std::cerr << "\tmpc iter=" << mpc_iter_ << std::endl;
+  std::cerr << "\tstarting configuration: " << starting_configuration_.to_string() << std::endl;
+
+  // Update state of iters:
+  control_iter_ = (control_iter_ + 1) %
+      ((int) std::round(mpc_timestep_ / controller_timestep_));
+  if (control_iter_ == 0) {
+    mpc_iter_ = (mpc_iter_ + 1) % (S_ + D_);
+    // Update walking state:
+    if (mpc_iter_ == 0 && walking_state_ == WalkingState::Standing &&
+        !footstep_plan_.empty()) {
+      walking_state_ = WalkingState::Starting;
+      starting_configuration_ = footstep_plan_.front();
+    } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Starting) {
+      walking_state_ = WalkingState::SingleSupport;
+    } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::DoubleSupport) {
+      if (!footstep_plan_.empty()) {
+        footstep_plan_.pop_front();
+      }
+      if (!footstep_plan_.empty()) {
+        starting_configuration_ = footstep_plan_.front();
+        walking_state_ = WalkingState::SingleSupport;
+      } else {
+        if (starting_configuration_.getSupportFoot() == Foot::LEFT) {
+          starting_configuration_.setSupportFoot(Foot::RIGHT);
+        } else {
+          starting_configuration_.setSupportFoot(Foot::LEFT);
+        }
+        walking_state_ = WalkingState::SingleSupport;
+      }
+    } else if (mpc_iter_ == S_ && walking_state_ == WalkingState::SingleSupport) {
+      walking_state_ = WalkingState::DoubleSupport;
+    }
+  }
+
+  /****************************************************************************/
+
   // 1. Read in new walk values (forward, left, turn, power) only at the start of a walk step cycle, ie when t = 0
   if(generator.t == 0)
     calcNextStep(generator, speed, target, walkMode);

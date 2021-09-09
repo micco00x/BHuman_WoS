@@ -43,6 +43,8 @@
 
 #pragma once
 
+#include <deque>
+
 #include "Representations/Configuration/GlobalOptions.h"
 #include "Representations/Configuration/MassCalibration.h"
 #include "Representations/Configuration/RobotDimensions.h"
@@ -121,6 +123,11 @@ MODULE(Walk2014Generator,
 
 class Walk2014Generator : public Walk2014GeneratorBase
 {
+ public:
+  Walk2014Generator();
+
+ private:
+
   enum WalkState
   {
     standing,
@@ -159,6 +166,88 @@ class Walk2014Generator : public Walk2014GeneratorBase
   int slowWeightShifts; /**< How often took the weight shift significantly longer in a row? */
   float torsoTilt; /**< The current tilt of the torso (in radians). */
   unsigned timeWhenStandBegan = 0; /**< The time when stand began (in ms). */
+
+  /*! State of the robot regarding walking phases. */
+  enum class WalkingState {
+    Standing, /*!< The robot is standing, no footstep plan to execute. */
+    Starting, /*!< A footstep plan is available, moving equilibrium from static to dynamic. */
+    SingleSupport, /*!< Single support phase, keep ZMP within support polygon. */
+    DoubleSupport, /*!< Double support phase, keep ZMP within support polygon. */
+    Stopping /*!< Similar to double support phase, but executing last element of footstep plan. */
+  };
+
+  enum class Foot {
+    LEFT,
+    RIGHT
+  };
+
+  class Configuration {
+   public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+    Configuration() = default;
+
+    Configuration(
+        const Eigen::Vector4d& qL,
+        const Eigen::Vector4d& qR,
+        Foot support_foot,
+        double h_z) :
+        qL_(qL),
+        qR_(qR),
+        support_foot_(support_foot),
+        h_z_(h_z) {
+
+    }
+
+    Foot getSupportFoot() const {
+      return support_foot_;
+    }
+
+    void setSupportFoot(Foot support_foot) {
+      support_foot_ = support_foot;
+    }
+
+    std::string to_string() {
+      std::string support_foot_str = "LEFT";
+      if (support_foot_ == Foot::RIGHT) {
+        support_foot_str = "RIGHT";
+      }
+      return std::string("<(") +
+          std::to_string(qL_.x()) + ", " +
+          std::to_string(qL_.y()) + ", " +
+          std::to_string(qL_.z()) + ", " + 
+          std::to_string(qL_.w()) + "), " +
+          "(" +
+          std::to_string(qR_.x()) + ", " +
+          std::to_string(qR_.y()) + ", " +
+          std::to_string(qR_.z()) + ", " +
+          std::to_string(qR_.w()) + "), " +
+          std::to_string(h_z_) + ", " +
+          support_foot_str + ">";
+    }
+
+    Eigen::Vector4d qL_;
+    Eigen::Vector4d qR_;
+    Foot support_foot_;
+    double h_z_;
+  };
+
+  double single_support_duration_ = 0.3;
+  double double_support_duration_ = 0.2;
+  double mpc_timestep_ = 0.1;
+  double controller_timestep_ = 0.01;
+
+  int S_ = static_cast<int>(std::round(single_support_duration_ / mpc_timestep_));
+  int D_ = static_cast<int>(std::round(double_support_duration_ / mpc_timestep_));
+  int M_ = 2;
+  int N_ = (S_ + D_) * M_;
+
+  int control_iter_ = 0;
+  int mpc_iter_ = 0;
+
+  WalkingState walking_state_ = WalkingState::Standing;
+  Configuration starting_configuration_;
+  std::deque<Configuration> footstep_plan_;
 
   /**
    * This method is called when the representation provided needs to be updated.
