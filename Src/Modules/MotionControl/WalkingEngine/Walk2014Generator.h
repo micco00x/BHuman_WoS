@@ -43,8 +43,11 @@
 
 #pragma once
 
+// STL
 #include <deque>
+#include <functional>
 
+// BHuman
 #include "Representations/Configuration/GlobalOptions.h"
 #include "Representations/Configuration/MassCalibration.h"
 #include "Representations/Configuration/RobotDimensions.h"
@@ -59,6 +62,9 @@
 #include "Tools/Module/Module.h"
 #include "Tools/RingBufferWithSum.h"
 #include "Tools/RobotParts/Legs.h"
+
+// MPC
+#include "MPCSolver.hpp"
 
 MODULE(Walk2014Generator,
 {,
@@ -124,6 +130,7 @@ MODULE(Walk2014Generator,
 class Walk2014Generator : public Walk2014GeneratorBase
 {
  public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   Walk2014Generator();
 
  private:
@@ -203,8 +210,28 @@ class Walk2014Generator : public Walk2014GeneratorBase
       return support_foot_;
     }
 
+    const Eigen::Vector4d& getSupportFootConfiguration() const {
+      if (support_foot_ == Foot::LEFT) {
+        return qL_;
+      } else {
+        return qR_;
+      }
+    }
+
+    const Eigen::Vector4d& getSwingFootConfiguration() const {
+      if (support_foot_ == Foot::LEFT) {
+        return qR_;
+      } else {
+        return qL_;
+      }
+    }
+
     void setSupportFoot(Foot support_foot) {
       support_foot_ = support_foot;
+    }
+
+    void setSwingFootTrajectoryHeight(double h_z) {
+      h_z_ = h_z;
     }
 
     std::string to_string() {
@@ -232,9 +259,10 @@ class Walk2014Generator : public Walk2014GeneratorBase
     double h_z_;
   };
 
+  double com_target_height_ = 0.22;
   double single_support_duration_ = 0.3;
   double double_support_duration_ = 0.2;
-  double mpc_timestep_ = 0.1;
+  double mpc_timestep_ = 0.05;
   double controller_timestep_ = 0.01;
 
   int S_ = static_cast<int>(std::round(single_support_duration_ / mpc_timestep_));
@@ -247,7 +275,15 @@ class Walk2014Generator : public Walk2014GeneratorBase
 
   WalkingState walking_state_ = WalkingState::Standing;
   Configuration starting_configuration_;
+  Configuration target_configuration_;
+  std::function<Eigen::Vector4d(double)> swing_foot_trajectory_;
   std::deque<Configuration> footstep_plan_;
+
+  static constexpr int numVariables_ = 60;
+  static constexpr int numEqualityConstraints_ = 3;
+  static constexpr int numInequalityConstraints_ = 60;
+  std::shared_ptr<mpcSolver::MPCSolver<numVariables_, numEqualityConstraints_, numInequalityConstraints_>> mpc_solver_ptr_;
+  std::vector<Eigen::VectorXd> mpc_plan_;
 
   /**
    * This method is called when the representation provided needs to be updated.
