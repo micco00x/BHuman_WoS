@@ -97,7 +97,7 @@ Walk2014Generator::Walk2014Generator() {
   // Setup MPC solver:
   double mpc_prediction_horizon_time =
       2.0 * (single_support_duration_ + double_support_duration_);
-  double mpc_foot_constraint_size = 0.02;
+  double mpc_foot_constraint_size = 0.01;
   // TODO: p_lsole_w and p_rsole_w should be computed through
   //       localization + direct kinematics
   Eigen::Vector3d p_lsole_w(0.0,  0.05, 0.0);
@@ -325,17 +325,26 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
         mpc_plan_.push_back(footstep_plan_[1].getSupportFootConfiguration());
         mpc_plan_.push_back(footstep_plan_[2].getSupportFootConfiguration());
       } else if (footstep_plan_.size() >= 2) {
+        const auto& qSupportFinal = footstep_plan_[1].getSupportFootConfiguration();
+        const auto& qSwingFinal   = footstep_plan_[1].getSwingFootConfiguration();
+        Eigen::Vector4d qMiddleFinal = (qSupportFinal + qSwingFinal) / 2.0;
         mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
-        mpc_plan_.push_back(footstep_plan_[1].getSupportFootConfiguration());
-        mpc_plan_.push_back(footstep_plan_[1].getSwingFootConfiguration());
+        mpc_plan_.push_back(qMiddleFinal);
+        mpc_plan_.push_back(qMiddleFinal);
       } else if (footstep_plan_.size() >= 1) {
-        mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
-        mpc_plan_.push_back(footstep_plan_[0].getSwingFootConfiguration());
-        mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
+        const auto& qSupportFinal = footstep_plan_[0].getSupportFootConfiguration();
+        const auto& qSwingFinal   = footstep_plan_[0].getSwingFootConfiguration();
+        Eigen::Vector4d qMiddleFinal = (qSupportFinal + qSwingFinal) / 2.0;
+        mpc_plan_.push_back(qMiddleFinal);
+        mpc_plan_.push_back(qMiddleFinal);
+        mpc_plan_.push_back(qMiddleFinal);
       } else {
-        mpc_plan_.push_back(starting_configuration_.getSupportFootConfiguration());
-        mpc_plan_.push_back(starting_configuration_.getSwingFootConfiguration());
-        mpc_plan_.push_back(starting_configuration_.getSupportFootConfiguration());
+        const auto& qSupportFinal = starting_configuration_.getSupportFootConfiguration();
+        const auto& qSwingFinal   = starting_configuration_.getSwingFootConfiguration();
+        Eigen::Vector4d qMiddleFinal = (qSupportFinal + qSwingFinal) / 2.0;
+        mpc_plan_.push_back(qMiddleFinal);
+        mpc_plan_.push_back(qMiddleFinal);
+        mpc_plan_.push_back(qMiddleFinal);
       }
     }
   }
