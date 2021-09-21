@@ -60,6 +60,7 @@
 #include "Tools/Range.h"
 #include <algorithm>
 
+#include <chrono>
 #include <iostream>
 
 MAKE_MODULE(Walk2014Generator, motionControl);
@@ -113,8 +114,6 @@ angle_difference(T alpha, T beta) {
 
 Walk2014Generator::Walk2014Generator() {
   // Setup MPC solver:
-  double mpc_prediction_horizon_time =
-      2.0 * (single_support_duration_ + double_support_duration_);
   double mpc_foot_constraint_size = 0.01;
   // TODO: p_lsole_w and p_rsole_w should be computed through
   //       localization + direct kinematics
@@ -127,7 +126,6 @@ Walk2014Generator::Walk2014Generator() {
       numVariables_, numEqualityConstraints_, numInequalityConstraints_>>(
     mpc_timestep_,
     controller_timestep_,
-    mpc_prediction_horizon_time,
     single_support_duration_,
     double_support_duration_,
     com_target_height_,
@@ -233,7 +231,7 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
                                    WalkGenerator::WalkMode walkMode,
                                    const std::function<Pose3f(float phase)>& getKickFootOffset)
 {
-  std::cerr << "Walk2014Generator::update (generator.t=" << generator.t << ")" << std::endl;
+  //std::cerr << "Walk2014Generator::update (generator.t=" << generator.t << ")" << std::endl;
   std::string walking_state_str;
   if (walking_state_ == WalkingState::Standing) {
     walking_state_str = "Standing";
@@ -367,13 +365,17 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
     }
   }
       
-  std::cerr << "WalkingState::" << walking_state_str << std::endl;
-  std::cerr << "\tcontrol iter=" << control_iter_ << std::endl;
-  std::cerr << "\tmpc iter=" << mpc_iter_ << std::endl;
-  std::cerr << "\tstarting configuration: " << starting_configuration_.to_string() << std::endl;
-  std::cerr << "\ttarget configuration: " << target_configuration_.to_string() << std::endl;
+  //std::cerr << "WalkingState::" << walking_state_str << std::endl;
+  //std::cerr << "\tcontrol iter=" << control_iter_ << std::endl;
+  //std::cerr << "\tmpc iter=" << mpc_iter_ << std::endl;
+  //std::cerr << "\tstarting configuration: " << starting_configuration_.to_string() << std::endl;
+  //std::cerr << "\ttarget configuration: " << target_configuration_.to_string() << std::endl;
 
+  std::chrono::time_point<std::chrono::system_clock> t0 = std::chrono::system_clock::now();
   mpc_solver_ptr_->solve(mpc_plan_);
+  std::chrono::time_point<std::chrono::system_clock> tf = std::chrono::system_clock::now();
+  std::chrono::duration<double> elapsed_seconds = tf - t0;
+  std::cerr << "MPC solved in " << elapsed_seconds.count() << std::endl;
 
   // Compute pose of support and swing foot:
   const auto& p_torso_w_desired = mpc_solver_ptr_->getOptimalCoMPosition();
@@ -387,10 +389,10 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
   if (t < single_support_duration_) s = t / single_support_duration_;
   auto T_swing_w = swing_foot_trajectory_(s);
 
-  std::cerr << "p_com_w_desired: " << p_torso_w_desired.transpose() << std::endl;
-  std::cerr << "d(zmp, supp)=" << (p_zmp_w_desired - T_supp_w_t0.head<3>()).norm() << std::endl;
-  std::cerr << "p_zmp_w_desired: " << p_zmp_w_desired.transpose() << std::endl;
-  std::cerr << "T_swing_w: " << T_swing_w.transpose() << std::endl;
+  //std::cerr << "p_com_w_desired: " << p_torso_w_desired.transpose() << std::endl;
+  //std::cerr << "d(zmp, supp)=" << (p_zmp_w_desired - T_supp_w_t0.head<3>()).norm() << std::endl;
+  //std::cerr << "p_zmp_w_desired: " << p_zmp_w_desired.transpose() << std::endl;
+  //std::cerr << "T_swing_w: " << T_swing_w.transpose() << std::endl;
 
   Eigen::Vector4d T_left_w;
   Eigen::Vector4d T_right_w;
@@ -406,8 +408,8 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
     theta_supp_w = T_right_w_t0.w();
   }
 
-  std::cerr << "T_left_w: " << T_left_w.transpose() << std::endl;
-  std::cerr << "T_right_w: " << T_right_w.transpose() << std::endl;
+  //std::cerr << "T_left_w: " << T_left_w.transpose() << std::endl;
+  //std::cerr << "T_right_w: " << T_right_w.transpose() << std::endl;
 
   Eigen::Vector4d T_torso_w;
   T_torso_w << p_torso_w_desired, theta_supp_w;
@@ -415,8 +417,8 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
   Eigen::Vector4d T_left_torso  = T_mul(T_w_torso, T_left_w);
   Eigen::Vector4d T_right_torso = T_mul(T_w_torso, T_right_w); 
 
-  std::cerr << "T_left_torso: " << T_left_torso.transpose() << std::endl;
-  std::cerr << "T_right_torso: " << T_right_torso.transpose() << std::endl;
+  //std::cerr << "T_left_torso: " << T_left_torso.transpose() << std::endl;
+  //std::cerr << "T_right_torso: " << T_right_torso.transpose() << std::endl;
 
   // Convert position to mm:
   T_left_torso.head<3>() *= 1000.0;

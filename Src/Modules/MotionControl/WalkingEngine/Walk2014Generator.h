@@ -267,8 +267,6 @@ class Walk2014Generator : public Walk2014GeneratorBase
 
   int S_ = static_cast<int>(std::round(single_support_duration_ / mpc_timestep_));
   int D_ = static_cast<int>(std::round(double_support_duration_ / mpc_timestep_));
-  int M_ = 2;
-  int N_ = (S_ + D_) * M_;
 
   int control_iter_ = 0;
   int mpc_iter_ = 0;
@@ -279,9 +277,12 @@ class Walk2014Generator : public Walk2014GeneratorBase
   std::function<Eigen::Vector4d(double)> swing_foot_trajectory_;
   std::deque<Configuration> footstep_plan_;
 
-  static constexpr int numVariables_ = 60;
+  // Change N_ to modify prediction horizon.
+  static constexpr int N_ = 20;
+  // Do not modify the following.
+  static constexpr int numVariables_ = N_ * 3;
   static constexpr int numEqualityConstraints_ = 3;
-  static constexpr int numInequalityConstraints_ = 60;
+  static constexpr int numInequalityConstraints_ = N_ * 3;
   std::shared_ptr<mpcSolver::MPCSolver<numVariables_, numEqualityConstraints_, numInequalityConstraints_>> mpc_solver_ptr_;
   std::vector<Eigen::VectorXd> mpc_plan_;
 

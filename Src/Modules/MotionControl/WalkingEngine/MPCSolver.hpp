@@ -17,7 +17,6 @@ class MPCSolver{
   MPCSolver(
       double mpc_timestep,
       double control_timestep,
-      double prediction_time,
       double single_support_duration,
       double double_support_duration,
       double com_target_height,
@@ -26,7 +25,6 @@ class MPCSolver{
       const Eigen::Vector3d& zmp_position) :
       mpcTimeStep(mpc_timestep),
       controlTimeStep(control_timestep),
-      predictionTime(prediction_time),
       singleSupportDuration(single_support_duration),
       doubleSupportDuration(double_support_duration),
       comTargetHeight(com_target_height),
@@ -35,23 +33,35 @@ class MPCSolver{
       comPos(com_position),
       zmpPos(zmp_position),
       qp_solver_(std::make_shared<labrob::qpsolvers::QPOASESQPSolver<numVariables_, numEqualityConstraints_, numInequalityConstraints_>>()) {
-    generatePredictionMatrices();
+    constexpr int N_ = numVariables_ / 3;
+
+    S = std::round(singleSupportDuration / mpcTimeStep);
+    D = std::round(doubleSupportDuration / mpcTimeStep);
+
+    // Matrices for ZMP prediction
+    p = Eigen::Matrix<double, N_, 1>::Ones();
+    P = Eigen::Matrix<double, N_, N_>::Constant(mpcTimeStep);
+
+    for (int i = 0; i < N_; ++i) {
+      for (int j = 0; j < N_; ++j){
+        if (j > i) P(i, j) = 0;
+      }
+    }
   }
 
   // Main method
   void solve(const std::vector<Eigen::VectorXd>& plan){
 
-    // Save iteration parameters
-    this->plan = plan;
+    constexpr int N_ = numVariables_ / 3;
 
     // Mapping
-    Eigen::MatrixXd mapping(N,plan.size());
+    Eigen::MatrixXd mapping(N_,plan.size());
     for (int j = 0; j < static_cast<int>(plan.size()); j++) {
-      for (int i = 0; i < N; i++) {
+      for (int i = 0; i < N_; i++) {
         mapping(i,j) = clamp(- (double)i/D + 1 + (double)(S-mpcIter+j*(S+D))/D, 0, 1) - clamp(- (double)i/D + 1 + (double)(S-mpcIter+(j-1)*(S+D))/D, 0, 1);
       }
     }
-    for (int i = 1; i < N; i++) {
+    for (int i = 1; i < N_; i++) {
       mapping(i,plan.size()-1) = std::max(mapping(i-1,plan.size()-1), mapping(i,plan.size()-1)); //last column must never decrease
     }
 
@@ -73,53 +83,52 @@ class MPCSolver{
     Eigen::VectorXd mc_z = mapping * plan_z;
     Eigen::VectorXd mc_th = mapping * plan_th;
 
-    Eigen::MatrixXd rotSin = Eigen::MatrixXd::Zero(N,N);
-    Eigen::MatrixXd rotCos = Eigen::MatrixXd::Zero(N,N);
-    for (int i = 0; i < N; i++) {
+    Eigen::Matrix<double, N_, N_> rotSin = Eigen::Matrix<double, N_, N_>::Zero();
+    Eigen::Matrix<double, N_, N_> rotCos = Eigen::Matrix<double, N_, N_>::Zero();
+    for (int i = 0; i < N_; i++) {
       rotSin(i,i) = sin(mc_th(i));
       rotCos(i,i) = cos(mc_th(i));
     }
-    Eigen::MatrixXd zmpRotMatrix(3*N,3*N);
-    //zmpRotMatrix <<  rotCos, rotSin, Eigen::MatrixXd::Zero(N,N),
-    //                -rotSin, rotCos, Eigen::MatrixXd::Zero(N,N),
-    //                 Eigen::MatrixXd::Zero(N,2*N), Eigen::MatrixXd::Identity(N,N);
-    zmpRotMatrix = Eigen::MatrixXd::Identity(3*N,3*N);
+    Eigen::Matrix<double, numVariables_, numVariables_> zmpRotMatrix = Eigen::Matrix<double, numVariables_, numVariables_>::Identity();
+    //zmpRotMatrix <<  rotCos, rotSin, Eigen::MatrixXd::Zero(N_,N_),
+    //                -rotSin, rotCos, Eigen::MatrixXd::Zero(N_,N_),
+    //                 Eigen::MatrixXd::Zero(N_,2*N_), Eigen::MatrixXd::Identity(N_,N_);
 
     // Matrices for ZMP prediction
-    Eigen::MatrixXd P = Eigen::MatrixXd::Ones(N,N)*mpcTimeStep;
+    P = Eigen::Matrix<double, N_, N_>::Ones() * mpcTimeStep;
 
-    for(int i=0; i<N;++i){
-      for(int j=0;j<N;++j){
+    for(int i=0; i<N_;++i){
+      for(int j=0;j<N_;++j){
         if (j>i) P(i,j)=0;
       }
     }
 
     AZmp.setZero();
-    AZmp.block(0,0,N,N) = P;
-    AZmp.block(N,N,N,N) = P;
-    AZmp.block(2*N,2*N,N,N) = P;
+    AZmp.block(     0,      0, N_, N_) = P;
+    AZmp.block(    N_,     N_, N_, N_) = P;
+    AZmp.block(2 * N_, 2 * N_, N_, N_) = P;
     AZmp = zmpRotMatrix * AZmp;
 
-    Eigen::VectorXd bZmpMinFixed(3*N);
-    Eigen::VectorXd bZmpMaxFixed(3*N);
-    Eigen::VectorXd bZmpMinState(3*N);
-    Eigen::VectorXd bZmpMaxState(3*N);
+    Eigen::Matrix<double, numVariables_, 1> bZmpMinFixed;
+    Eigen::Matrix<double, numVariables_, 1> bZmpMaxFixed;
+    Eigen::Matrix<double, numVariables_, 1> bZmpMinState;
+    Eigen::Matrix<double, numVariables_, 1> bZmpMaxState;
 
-    bZmpMinFixed << mc_x - Eigen::VectorXd::Ones(N)*footContraintSquareWidth/2, 
-                    mc_y - Eigen::VectorXd::Ones(N)*footContraintSquareWidth/2, 
-                    mc_z - Eigen::VectorXd::Ones(N)*footContraintSquareWidth/2;
+    bZmpMinFixed << mc_x - Eigen::Matrix<double, N_, 1>::Constant(footContraintSquareWidth / 2.0), 
+                    mc_y - Eigen::Matrix<double, N_, 1>::Constant(footContraintSquareWidth / 2.0), 
+                    mc_z - Eigen::Matrix<double, N_, 1>::Constant(footContraintSquareWidth / 2.0);
 
-    bZmpMaxFixed << mc_x + Eigen::VectorXd::Ones(N)*footContraintSquareWidth/2, 
-                    mc_y + Eigen::VectorXd::Ones(N)*footContraintSquareWidth/2, 
-                    mc_z + Eigen::VectorXd::Ones(N)*footContraintSquareWidth/2;
+    bZmpMaxFixed << mc_x + Eigen::Matrix<double, N_, 1>::Constant(footContraintSquareWidth / 2.0), 
+                    mc_y + Eigen::Matrix<double, N_, 1>::Constant(footContraintSquareWidth / 2.0), 
+                    mc_z + Eigen::Matrix<double, N_, 1>::Constant(footContraintSquareWidth / 2.0);
 
-    bZmpMinState << Eigen::VectorXd::Ones(N) * zmpPos(0), 
-                    Eigen::VectorXd::Ones(N) * zmpPos(1), 
-                    Eigen::VectorXd::Ones(N) * zmpPos(2);
+    bZmpMinState << Eigen::Matrix<double, N_, 1>::Constant(zmpPos(0)), 
+                    Eigen::Matrix<double, N_, 1>::Constant(zmpPos(1)), 
+                    Eigen::Matrix<double, N_, 1>::Constant(zmpPos(2));
 
-    bZmpMaxState << Eigen::VectorXd::Ones(N) * zmpPos(0), 
-                    Eigen::VectorXd::Ones(N) * zmpPos(1), 
-                    Eigen::VectorXd::Ones(N) * zmpPos(2);
+    bZmpMaxState << Eigen::Matrix<double, N_, 1>::Constant(zmpPos(0)), 
+                    Eigen::Matrix<double, N_, 1>::Constant(zmpPos(1)), 
+                    Eigen::Matrix<double, N_, 1>::Constant(zmpPos(2));
 
     bZmpMinState = zmpRotMatrix * bZmpMinState;
     bZmpMaxState = zmpRotMatrix * bZmpMaxState;
@@ -127,27 +136,23 @@ class MPCSolver{
     bZmpMin = bZmpMinFixed - bZmpMinState;
     bZmpMax = bZmpMaxFixed - bZmpMaxState;
 
-    Eigen::VectorXd b(N);
-    Aeq = Eigen::MatrixXd::Zero(3,3*N);
+    Eigen::Matrix<double, N_, 1> b;
+    Aeq.setZero();
 
-    for(int i=0;i<N;++i){
+    for(int i=0;i<N_;++i){
       b(i) = pow(exp(-omega*mpcTimeStep),i);
     }
 
-    Aeq.block(0,0,1,N)       = (1/omega)*(1-exp(-omega*mpcTimeStep))*b.transpose();
-    Aeq.block(1,N,1,N)     = (1/omega)*(1-exp(-omega*mpcTimeStep))*b.transpose();
-    Aeq.block(2,2*N,1,N) = (1/omega)*(1-exp(-omega*mpcTimeStep))*b.transpose();
+    Aeq.block(0,      0, 1, N_) = (1.0 / omega) * (1.0 - exp(-omega * mpcTimeStep))*b.transpose();
+    Aeq.block(1,     N_, 1, N_) = (1.0 / omega) * (1.0 - exp(-omega * mpcTimeStep))*b.transpose();
+    Aeq.block(2, 2 * N_, 1, N_) = (1.0 / omega) * (1.0 - exp(-omega * mpcTimeStep))*b.transpose();
 
-    beq = Eigen::VectorXd(3);
     beq << comPos(0) + comVel(0)/omega - zmpPos(0),
           comPos(1) + comVel(1)/omega - zmpPos(1),
           comPos(2) + comVel(2)/omega - (zmpPos(2) + comTargetHeight);
 
-    costFunctionH = Eigen::MatrixXd::Zero(3*N,3*N);
-    costFunctionF = Eigen::VectorXd::Zero(3*N);
-    costFunctionH.block(0,0,N,N) = Eigen::MatrixXd::Identity(N,N);
-    costFunctionH.block(N,N,N,N) = Eigen::MatrixXd::Identity(N,N);
-    costFunctionH.block(2*N,2*N,N,N) = Eigen::MatrixXd::Identity(N,N);
+    costFunctionH.setIdentity();
+    costFunctionF.setZero();
 
     // Solve QP
     qp_solver_.solve(
@@ -159,16 +164,16 @@ class MPCSolver{
         bZmpMin,
         bZmpMax
     );
-    Eigen::VectorXd decisionVariables = qp_solver_.get_solution();
+    Eigen::Matrix<double, numVariables_, 1> decisionVariables = qp_solver_.get_solution();
 
     // Split the QP solution in ZMP dot and footsteps
-    Eigen::VectorXd zDotOptimalX(N);
-    Eigen::VectorXd zDotOptimalY(N);
-    Eigen::VectorXd zDotOptimalZ(N);
+    Eigen::Matrix<double, N_, 1> zDotOptimalX;
+    Eigen::Matrix<double, N_, 1> zDotOptimalY(N_);
+    Eigen::Matrix<double, N_, 1> zDotOptimalZ(N_);
 
-    zDotOptimalX = (decisionVariables.head(N));
-    zDotOptimalY = (decisionVariables.segment(N,N));
-    zDotOptimalZ = (decisionVariables.segment(2*N,N));
+    zDotOptimalX = (decisionVariables.head(N_));
+    zDotOptimalY = (decisionVariables.segment(N_,N_));
+    zDotOptimalZ = (decisionVariables.segment(2*N_,N_));
 
     // Update the state based on the result of the QP
     Eigen::Vector3d nextStateX = updateState(zDotOptimalX(0),0,controlTimeStep);
@@ -178,8 +183,6 @@ class MPCSolver{
     comPos << nextStateX(0),nextStateY(0),nextStateZ(0);
     comVel << nextStateX(1),nextStateY(1),nextStateZ(1);
     zmpPos << nextStateX(2),nextStateY(2),nextStateZ(2);
-    optimalFootsteps = plan.at(1);
-    //optimalFootsteps << plan_x(1),plan_y(1),plan_z(1),plan_th(1);
 
     ++controlIter;
     mpcIter = floor(controlIter*controlTimeStep/mpcTimeStep);
@@ -188,7 +191,6 @@ class MPCSolver{
       mpcIter = 0;
       footstepCounter++;
     }
-
   }
 
   // Get stuff
@@ -211,27 +213,6 @@ class MPCSolver{
   double getMPCTimestep() const { return mpcTimeStep; }
   double getSingleSupportDuration() const { return singleSupportDuration; }
 
-  // Variable footstep timing
-  void generatePredictionMatrices() {
-    N = round(predictionTime/mpcTimeStep);
-    S = round(singleSupportDuration/mpcTimeStep);
-    D = round(doubleSupportDuration/mpcTimeStep);
-    M = ceil(N/(S+D));
-  
-    // Matrices for feet rotations
-    predictedRotations = Eigen::VectorXd::Zero(M+1);
-
-    // Matrices for ZMP prediction
-    p =  Eigen::VectorXd::Ones(N);
-    P =  Eigen::MatrixXd::Ones(N,N)*mpcTimeStep;
-
-    for(int i=0; i<N;++i){
-      for(int j=0;j<N;++j){
-        if (j>i) P(i,j)=0;
-      }
-    }
-  }
-
   // Update the state
   Eigen::Vector3d updateState(double zmpDot, int dim, double timeStep) {
     // Update the state along the dim-th direction (0,1,2) = (x,y,z)
@@ -239,8 +220,8 @@ class MPCSolver{
     double ch = cosh(omega*timeStep);
     double sh = sinh(omega*timeStep);
 
-    Eigen::Matrix3d A_upd = Eigen::MatrixXd::Zero(3,3);
-    Eigen::Vector3d B_upd = Eigen::VectorXd::Zero(3);
+    Eigen::Matrix3d A_upd = Eigen::Matrix3d::Zero();
+    Eigen::Vector3d B_upd = Eigen::Vector3d::Zero();
     A_upd<<ch,sh/omega,1-ch,omega*sh,ch,-omega*sh,0,0,1;
     B_upd<<timeStep-sh/omega,1-ch,timeStep;
 
@@ -252,15 +233,14 @@ class MPCSolver{
   }
 
  private:
-  double clamp(double n, double n_min, double n_max) {return std::max(n_min,std::min(n_max,n));}
+  double clamp(double N_, double n_min, double n_max) {return std::max(n_min,std::min(n_max,N_));}
 
   // Constant parameters
-  int N,S,D,M;
+  int S,D;
   unsigned int footstepCounter = 0;
   
   double mpcTimeStep;
   double controlTimeStep;
-  double predictionTime;
   double singleSupportDuration, doubleSupportDuration;
   double comTargetHeight;
   double footContraintSquareWidth;
@@ -272,8 +252,8 @@ class MPCSolver{
   int mpcIter = 0, controlIter = 0;
 
   // Matrices for prediction
-  Eigen::VectorXd p;
-  Eigen::MatrixXd P;
+  Eigen::Matrix<double, numVariables_ / 3, 1> p;
+  Eigen::Matrix<double, numVariables_ / 3, numVariables_ / 3> P;
 
   // Matrices for cost function
   Eigen::Matrix<double, numVariables_, numVariables_> costFunctionH;
@@ -288,20 +268,10 @@ class MPCSolver{
   Eigen::Matrix<double, numInequalityConstraints_, 1> bZmpMax;
   Eigen::Matrix<double, numInequalityConstraints_, 1> bZmpMin;
 
-  // Solution of the QP for determining orientations
-  Eigen::VectorXd predictedRotations;
-
   // State
   Eigen::Vector3d comPos;
   Eigen::Vector3d comVel = Eigen::Vector3d::Zero();
   Eigen::Vector3d zmpPos;
-  Eigen::Vector4d optimalFootsteps = Eigen::Vector4d::Zero();
-
-  // Support foot
-  Eigen::Vector4d currentSupportFoot = Eigen::Vector4d::Zero();
-  Eigen::Vector4d nextSupportFoot;
-
-  std::vector<Eigen::VectorXd> plan;
 
   labrob::qpsolvers::QPSolverEigenWrapper<double, numVariables_, numEqualityConstraints_, numInequalityConstraints_> qp_solver_;
 
