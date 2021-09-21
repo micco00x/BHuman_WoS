@@ -160,13 +160,54 @@ Walk2014Generator::Walk2014Generator() {
   );
   footstep_plan_.push_back(Configuration(
       Eigen::Vector4d(0.3,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.3, -0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.4, -0.05, 0.0, 0.0),
       Foot::RIGHT,
+      0.025)
+  );
+  footstep_plan_.push_back(Configuration(
+      Eigen::Vector4d(0.5,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.4, -0.05, 0.0, 0.0),
+      Foot::LEFT,
+      0.025)
+  );
+  footstep_plan_.push_back(Configuration(
+      Eigen::Vector4d(0.5,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.6, -0.05, 0.0, 0.0),
+      Foot::RIGHT,
+      0.025)
+  );
+  footstep_plan_.push_back(Configuration(
+      Eigen::Vector4d(0.7,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.6, -0.05, 0.0, 0.0),
+      Foot::LEFT,
+      0.025)
+  );
+  footstep_plan_.push_back(Configuration(
+      Eigen::Vector4d(0.7,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.8, -0.05, 0.0, 0.0),
+      Foot::RIGHT,
+      0.025)
+  );
+  footstep_plan_.push_back(Configuration(
+      Eigen::Vector4d(0.9,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.8, -0.05, 0.0, 0.0),
+      Foot::LEFT,
+      0.025)
+  );
+  footstep_plan_.push_back(Configuration(
+      Eigen::Vector4d(0.9,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(1.0, -0.05, 0.0, 0.0),
+      Foot::RIGHT,
+      0.025)
+  );
+  footstep_plan_.push_back(Configuration(
+      Eigen::Vector4d(1.0,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(1.0, -0.05, 0.0, 0.0),
+      Foot::LEFT,
       0.025)
   );
 
   starting_configuration_ = footstep_plan_.front();
-  walking_state_ = WalkingState::Starting;
 }
 
 void Walk2014Generator::update(WalkGenerator& generator)
@@ -435,11 +476,12 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
   // Update state of iters:
   control_iter_ = (control_iter_ + 1) %
       ((int) std::round(mpc_timestep_ / controller_timestep_));
+  if (delay_) --delay_;
   if (control_iter_ == 0) {
     mpc_iter_ = (mpc_iter_ + 1) % (S_ + D_);
     // Update walking state:
     if (mpc_iter_ == 0 && walking_state_ == WalkingState::Standing &&
-        !footstep_plan_.empty()) {
+        !footstep_plan_.empty() && !delay_) {
       walking_state_ = WalkingState::Starting;
       starting_configuration_ = footstep_plan_.front();
     } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Starting) {

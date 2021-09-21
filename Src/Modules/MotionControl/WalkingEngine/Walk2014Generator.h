@@ -264,6 +264,7 @@ class Walk2014Generator : public Walk2014GeneratorBase
   double double_support_duration_ = 0.2;
   double mpc_timestep_ = 0.05;
   double controller_timestep_ = 0.01;
+  int delay_ = 500; // 5 s delay.
 
   int S_ = static_cast<int>(std::round(single_support_duration_ / mpc_timestep_));
   int D_ = static_cast<int>(std::round(double_support_duration_ / mpc_timestep_));
@@ -275,7 +276,7 @@ class Walk2014Generator : public Walk2014GeneratorBase
   Configuration starting_configuration_;
   Configuration target_configuration_;
   std::function<Eigen::Vector4d(double)> swing_foot_trajectory_;
-  std::deque<Configuration> footstep_plan_;
+  std::deque<Configuration, Eigen::aligned_allocator<Configuration>> footstep_plan_;
 
   // Change N_ to modify prediction horizon.
   static constexpr int N_ = 20;
