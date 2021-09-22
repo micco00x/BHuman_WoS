@@ -62,10 +62,17 @@
 
 #include <chrono>
 #include <iostream>
+#include <fstream>
 
 MAKE_MODULE(Walk2014Generator, motionControl);
 
 static const float mmPerM = 1000.f;
+
+std::ofstream com_file("/tmp/com.txt");
+std::ofstream zmp_file("/tmp/zmp.txt");
+std::ofstream lsole_file("/tmp/lsole.txt");
+std::ofstream rsole_file("/tmp/rsole.txt");
+std::ofstream supp_file("/tmp/supp.txt");
 
 template <class T>
 Eigen::Matrix<T, 2, 2>
@@ -141,68 +148,68 @@ Walk2014Generator::Walk2014Generator() {
       0.0)
   );
   footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.1,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.075,  0.05, 0.0, 0.0),
       Eigen::Vector4d(0.0,  -0.05, 0.0, 0.0),
       Foot::LEFT,
       0.025)
   );
   footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.1,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.2, -0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.075,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.150, -0.05, 0.0, 0.0),
       Foot::RIGHT,
       0.025)
   );
   footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.3,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.2, -0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.225,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.150, -0.05, 0.0, 0.0),
       Foot::LEFT,
       0.025)
   );
   footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.3,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.4, -0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.225,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.300, -0.05, 0.0, 0.0),
       Foot::RIGHT,
       0.025)
   );
   footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.5,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.4, -0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.375,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.300, -0.05, 0.0, 0.0),
       Foot::LEFT,
       0.025)
   );
   footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.5,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.6, -0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.375,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.450, -0.05, 0.0, 0.0),
       Foot::RIGHT,
       0.025)
   );
   footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.7,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.6, -0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.525,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.450, -0.05, 0.0, 0.0),
       Foot::LEFT,
       0.025)
   );
   footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.7,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.8, -0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.525,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.600, -0.05, 0.0, 0.0),
       Foot::RIGHT,
       0.025)
   );
   footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.9,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.8, -0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.675,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.600, -0.05, 0.0, 0.0),
       Foot::LEFT,
       0.025)
   );
   footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.9,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(1.0, -0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.675,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.750, -0.05, 0.0, 0.0),
       Foot::RIGHT,
       0.025)
   );
   footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(1.0,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(1.0, -0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.750,  0.05, 0.0, 0.0),
+      Eigen::Vector4d(0.750, -0.05, 0.0, 0.0),
       Foot::LEFT,
       0.025)
   );
@@ -505,6 +512,13 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
       walking_state_ = WalkingState::DoubleSupport;
     }
   }
+
+  // Log data:
+  com_file << p_torso_w_desired.transpose() << std::endl;
+  zmp_file << p_zmp_w_desired.transpose() << std::endl;
+  lsole_file << T_left_w.head<3>().transpose() << std::endl;
+  rsole_file << T_right_w.head<3>().transpose() << std::endl;
+  if (mpc_iter_ == 0) supp_file << T_supp_w_t0.transpose() << std::endl;
 
   /****************************************************************************/
 
