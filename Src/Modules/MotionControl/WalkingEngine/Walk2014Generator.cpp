@@ -66,7 +66,7 @@
 
 MAKE_MODULE(Walk2014Generator, motionControl);
 
-static const float mmPerM = 1000.f;
+static const double mmPerM = 1000.0;
 
 std::ofstream com_file("/tmp/com.txt");
 std::ofstream zmp_file("/tmp/zmp.txt");
@@ -120,11 +120,22 @@ angle_difference(T alpha, T beta) {
 }
 
 Walk2014Generator::Walk2014Generator() {
+  Pose T_torso_w = Pose(
+      Eigen::Vector3d(0.0, 0.0, 0.24809), // taken from http://doc.aldebaran.com/2-1/family/robots/links_robot.html
+      Eigen::Matrix3d::Identity()
+  );
+  Eigen::Vector3d p_lsole_torso = theRobotModel.soleLeft.translation.cast<double>() / mmPerM;
+  Eigen::Matrix3d R_lsole_torso = theRobotModel.soleLeft.rotation.cast<double>();
+  Eigen::Vector3d p_rsole_torso = theRobotModel.soleRight.translation.cast<double>() / mmPerM;
+  Eigen::Matrix3d R_rsole_torso = theRobotModel.soleRight.rotation.cast<double>();
+  Pose T_lsole_torso(p_lsole_torso, R_lsole_torso);
+  Pose T_rsole_torso(p_rsole_torso, R_rsole_torso);
+  Pose T_lsole_w = T_torso_w * T_lsole_torso;
+  Pose T_rsole_w = T_torso_w * T_rsole_torso;
+
   // Setup MPC solver:
-  // TODO: p_lsole_w and p_rsole_w should be computed through
-  //       localization + direct kinematics
-  Eigen::Vector3d p_lsole_w(0.0,  0.05, 0.0);
-  Eigen::Vector3d p_rsole_w(0.0, -0.05, 0.0);
+  const Eigen::Vector3d& p_lsole_w = T_lsole_w.position;
+  const Eigen::Vector3d& p_rsole_w = T_rsole_w.position;
   Eigen::Vector3d p_zmp_w = (p_lsole_w + p_rsole_w) / 2.0;
   Eigen::Vector3d p_com_w =
       p_zmp_w + Eigen::Vector3d(0.0, 0.0, com_target_height_);
@@ -468,8 +479,8 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
   //std::cerr << "T_right_torso: " << T_right_torso.transpose() << std::endl;
 
   // Convert position to mm:
-  T_left_torso.head<3>() *= 1000.0;
-  T_right_torso.head<3>() *= 1000.0;
+  T_left_torso.head<3>() *= mmPerM;
+  T_right_torso.head<3>() *= mmPerM;
 
   // Setup data for IK:
   Eigen::Matrix3f R_left_torso_f = Rz(T_left_torso.w()).cast<float>();

@@ -188,6 +188,35 @@ class Walk2014Generator : public Walk2014GeneratorBase
     RIGHT
   };
 
+  class Pose {
+   public:
+    Pose() :
+        position(Eigen::Vector3d::Zero()),
+        orientation(Eigen::Matrix3d::Identity()) {
+
+    }
+
+    Pose(const Eigen::Vector3d& p, const Eigen::Matrix3d& R) :
+        position(p), orientation(R) {
+
+    }
+
+    Pose operator*(const Pose& pose) const {
+      return Pose(
+          orientation * pose.position + position,
+          orientation * pose.orientation);
+    }
+
+    Pose inv() const {
+      return Pose(
+          -orientation.transpose() * position,
+          orientation.transpose());
+    }
+
+    Eigen::Vector3d position;
+    Eigen::Matrix3d orientation;
+  };
+
   class Configuration {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW

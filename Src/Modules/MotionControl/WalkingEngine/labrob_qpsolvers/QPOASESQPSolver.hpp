@@ -107,7 +107,7 @@ class QPOASESQPSolver : public QPSolver<double, numVariables, numEqualityConstra
 
   // Set enable_hotstart_ to true to enable hotstart, set it to false
   // to disable it (i.e. it will never execute hotstart).
-  const bool enable_hotstart_ = false;
+  const bool enable_hotstart_ = true;
   bool hotstart_mode_ = false;
 
 }; // end class QPOASESQPSolver
