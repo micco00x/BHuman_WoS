@@ -4,7 +4,6 @@
 
 // STL
 #include <cstring> // memcpy
-#include <iostream>
 
 // qpOASES
 #include "qpOASES/qpOASES.hpp"
@@ -85,7 +84,6 @@ class QPOASESQPSolver : public QPSolver<double, numVariables, numEqualityConstra
       returnValue_ = qp_.hotstart(
           f_qpoases_, nullptr, nullptr, lbA_qpoases_, ubA_qpoases_, nWSR);
     }
-    std::cerr << returnValue_ << std::endl;
 
     qp_.getPrimalSolution(u_);
   }

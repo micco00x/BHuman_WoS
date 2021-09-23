@@ -305,7 +305,7 @@ class Walk2014Generator : public Walk2014GeneratorBase
   WalkingState walking_state_ = WalkingState::Standing;
   Configuration starting_configuration_;
   Configuration target_configuration_;
-  std::function<Eigen::Vector4d(double)> swing_foot_trajectory_;
+  std::function<Pose(double)> swing_foot_trajectory_;
   std::deque<Configuration, Eigen::aligned_allocator<Configuration>> footstep_plan_;
 
   // Change N_ to modify prediction horizon.

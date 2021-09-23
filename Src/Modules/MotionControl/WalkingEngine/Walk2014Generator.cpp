@@ -338,33 +338,21 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
           double swing_z = a * s * s + b * s + c;
           double swing_theta = T0.w() + angle_difference(Tf.w(), T0.w()) * s_bar;
           if (s_0 <= s && s <= s_f) {
-            return Eigen::Vector4d(
-                swing_x,
-                swing_y,
-                swing_z,
-                swing_theta
+            return Pose(
+                Eigen::Vector3d(swing_x, swing_y, swing_z),
+                Rz(swing_theta)
             );
           } else if (s < s_0) {
-            return Eigen::Vector4d(
-                T0.x(),
-                T0.y(),
-                swing_z,
-                T0.w()
+            return Pose(
+                Eigen::Vector3d(T0.x(), T0.y(), swing_z),
+                Rz(T0.w())
             );
           } else {
-            return Eigen::Vector4d(
-                Tf.x(),
-                Tf.y(),
-                swing_z,
-                Tf.w()
+            return Pose(
+                Eigen::Vector3d(Tf.x(), Tf.y(), swing_z),
+                Rz(Tf.w())
             );
           }
-          /*return Eigen::Vector4d(
-              T0.x() + (Tf.x() - T0.x()) * s,
-              T0.y() + (Tf.y() - T0.y()) * s,
-              a * s * s + b * s + c,
-              T0.w() + (Tf.w() - T0.w()) * s
-          );*/
         };
 
     const auto& qSupport = starting_configuration_.getSupportFootConfiguration();
@@ -438,64 +426,54 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
   // Compute pose of support and swing foot:
   const auto& p_torso_w_desired = mpc_solver_ptr_->getOptimalCoMPosition();
   const auto& p_zmp_w_desired = mpc_solver_ptr_->getOptimalZMPPosition();
-  const auto& T_left_w_t0  = starting_configuration_.qL_;
-  const auto& T_right_w_t0 = starting_configuration_.qR_;
-  const auto& T_supp_w_t0  = starting_configuration_.getSupportFootConfiguration();
+  Pose T_left_w_t0(
+      starting_configuration_.qL_.head<3>(),
+      Rz(starting_configuration_.qL_.w())
+  );
+  Pose T_right_w_t0(
+      starting_configuration_.qR_.head<3>(),
+      Rz(starting_configuration_.qR_.w())
+  );
+  Pose T_supp_w_t0(
+      starting_configuration_.getSupportFootConfiguration().head<3>(),
+      Rz(starting_configuration_.getSupportFootConfiguration().w())
+  );
 
   double t = controller_timestep_ * control_iter_ + mpc_timestep_ * mpc_iter_;
   double s = 1.0;
   if (t < single_support_duration_) s = t / single_support_duration_;
   auto T_swing_w = swing_foot_trajectory_(s);
 
-  //std::cerr << "p_com_w_desired: " << p_torso_w_desired.transpose() << std::endl;
-  //std::cerr << "d(zmp, supp)=" << (p_zmp_w_desired - T_supp_w_t0.head<3>()).norm() << std::endl;
-  //std::cerr << "p_zmp_w_desired: " << p_zmp_w_desired.transpose() << std::endl;
-  //std::cerr << "T_swing_w: " << T_swing_w.transpose() << std::endl;
-
-  Eigen::Vector4d T_left_w;
-  Eigen::Vector4d T_right_w;
-  double theta_supp_w;
+  Pose T_left_w;
+  Pose T_right_w;
 
   if (starting_configuration_.getSupportFoot() == Foot::LEFT) {
     T_left_w  = T_left_w_t0;
     T_right_w = T_swing_w;
-    theta_supp_w = T_left_w_t0.w();
   } else {
     T_left_w  = T_swing_w;
     T_right_w = T_right_w_t0;
-    theta_supp_w = T_right_w_t0.w();
   }
 
-  //std::cerr << "T_left_w: " << T_left_w.transpose() << std::endl;
-  //std::cerr << "T_right_w: " << T_right_w.transpose() << std::endl;
-
-  Eigen::Vector4d T_torso_w;
-  T_torso_w << p_torso_w_desired, theta_supp_w;
-  Eigen::Vector4d T_w_torso     = T_inv(T_torso_w);
-  Eigen::Vector4d T_left_torso  = T_mul(T_w_torso, T_left_w);
-  Eigen::Vector4d T_right_torso = T_mul(T_w_torso, T_right_w); 
-
-  //std::cerr << "T_left_torso: " << T_left_torso.transpose() << std::endl;
-  //std::cerr << "T_right_torso: " << T_right_torso.transpose() << std::endl;
-
-  // Convert position to mm:
-  T_left_torso.head<3>() *= mmPerM;
-  T_right_torso.head<3>() *= mmPerM;
+  Pose T_torso_w(p_torso_w_desired, T_supp_w_t0.orientation);
+  Pose T_w_torso = T_torso_w.inv();
+  Pose T_left_torso  = T_w_torso * T_left_w;
+  Pose T_right_torso = T_w_torso * T_right_w; 
 
   // Setup data for IK:
-  Eigen::Matrix3f R_left_torso_f = Rz(T_left_torso.w()).cast<float>();
-  Eigen::Vector3f p_left_torso_f = T_left_torso.head<3>().cast<float>();
-  Eigen::Matrix3f R_right_torso_f = Rz(T_right_torso.w()).cast<float>();
-  Eigen::Vector3f p_right_torso_f = T_right_torso.head<3>().cast<float>();
-  Pose3f leftFoot  = Pose3f(R_left_torso_f, p_left_torso_f);
-  Pose3f rightFoot = Pose3f(R_right_torso_f, p_right_torso_f);
+  Eigen::Matrix3f R_left_torso = T_left_torso.orientation.cast<float>();
+  Eigen::Vector3f p_left_torso = T_left_torso.position.cast<float>() * mmPerM;
+  Eigen::Matrix3f R_right_torso = T_right_torso.orientation.cast<float>();
+  Eigen::Vector3f p_right_torso = T_right_torso.position.cast<float>() * mmPerM;
+  Pose3f leftFoot  = Pose3f(R_left_torso, p_left_torso);
+  Pose3f rightFoot = Pose3f(R_right_torso, p_right_torso);
 
   // Log data:
   com_file << p_torso_w_desired.transpose() << std::endl;
   zmp_file << p_zmp_w_desired.transpose() << std::endl;
-  lsole_file << T_left_w.head<3>().transpose() << std::endl;
-  rsole_file << T_right_w.head<3>().transpose() << std::endl;
-  if (control_iter_ == 0 && mpc_iter_ == 0) supp_file << T_supp_w_t0.transpose() << std::endl;
+  lsole_file << T_left_w.position.transpose() << std::endl;
+  rsole_file << T_right_w.position.transpose() << std::endl;
+  if (control_iter_ == 0 && mpc_iter_ == 0) supp_file << T_supp_w_t0.position.transpose() << " " << T_supp_w_t0.orientation.eulerAngles(2, 1, 0).x() << std::endl;
 
   // Update state of iters:
   control_iter_ = (control_iter_ + 1) %
