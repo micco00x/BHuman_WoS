@@ -260,6 +260,7 @@ class Walk2014Generator : public Walk2014GeneratorBase
   };
 
   double com_target_height_ = 0.22;
+  double mpc_foot_constraint_size_ = 0.05;
   double single_support_duration_ = 0.3;
   double double_support_duration_ = 0.2;
   double mpc_timestep_ = 0.05;

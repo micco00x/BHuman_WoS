@@ -151,8 +151,14 @@ class MPCSolver{
           comPos(1) + comVel(1)/omega - zmpPos(1),
           comPos(2) + comVel(2)/omega - (zmpPos(2) + comTargetHeight);
 
-    costFunctionH.setIdentity();
-    costFunctionF.setZero();
+    costFunctionH.setZero();
+    costFunctionH.block(     0,      0, N_, N_) = Eigen::Matrix<double, N_, N_>::Identity() + beta_ * P.transpose() * P;
+    costFunctionH.block(    N_,     N_, N_, N_) = Eigen::Matrix<double, N_, N_>::Identity() + beta_ * P.transpose() * P;
+    costFunctionH.block(2 * N_, 2 * N_, N_, N_) = Eigen::Matrix<double, N_, N_>::Identity() + beta_ * P.transpose() * P;
+
+    costFunctionF.block(     0, 0, N_, 1) = beta_ * P.transpose() * (p * zmpPos.x() - mc_x);
+    costFunctionF.block(    N_, 0, N_, 1) = beta_ * P.transpose() * (p * zmpPos.y() - mc_y);
+    costFunctionF.block(2 * N_, 0, N_, 1) = beta_ * P.transpose() * (p * zmpPos.z() - mc_z);
 
     // Solve QP
     qp_solver_.solve(
@@ -258,6 +264,7 @@ class MPCSolver{
   // Matrices for cost function
   Eigen::Matrix<double, numVariables_, numVariables_> costFunctionH;
   Eigen::Matrix<double, numVariables_, 1> costFunctionF;
+  double beta_ = 1000.0;
 
   // Matrices for stability constraint
   Eigen::Matrix<double, numEqualityConstraints_, numVariables_> Aeq;

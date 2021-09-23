@@ -4,6 +4,7 @@
 
 // STL
 #include <cstring> // memcpy
+#include <iostream>
 
 // qpOASES
 #include "qpOASES/qpOASES.hpp"
@@ -73,9 +74,18 @@ class QPOASESQPSolver : public QPSolver<double, numVariables, numEqualityConstra
     memcpy(ubA_qpoases_ + numEqualityConstraints, d_max, numInequalityConstraints * sizeof(double));
 
     auto nWSR = nWSR_; // Deep copy nWSR to avoid changing original value.
-    returnValue_ = qp_.init(
-        H_qpoases_, f_qpoases_,
-        A_qpoases_, nullptr, nullptr, lbA_qpoases_, ubA_qpoases_, nWSR);
+    if (!hotstart_mode_) {
+      returnValue_ = qp_.init(
+          H_qpoases_, f_qpoases_,
+          A_qpoases_, nullptr, nullptr, lbA_qpoases_, ubA_qpoases_, nWSR);
+      if (enable_hotstart_) {
+        hotstart_mode_ = true;
+      }
+    } else {
+      returnValue_ = qp_.hotstart(
+          f_qpoases_, nullptr, nullptr, lbA_qpoases_, ubA_qpoases_, nWSR);
+    }
+    std::cerr << returnValue_ << std::endl;
 
     qp_.getPrimalSolution(u_);
   }
@@ -94,6 +104,11 @@ class QPOASESQPSolver : public QPSolver<double, numVariables, numEqualityConstra
   double* lbA_qpoases_;
   double* ubA_qpoases_;
   double* u_;
+
+  // Set enable_hotstart_ to true to enable hotstart, set it to false
+  // to disable it (i.e. it will never execute hotstart).
+  const bool enable_hotstart_ = false;
+  bool hotstart_mode_ = false;
 
 }; // end class QPOASESQPSolver
 

@@ -121,7 +121,6 @@ angle_difference(T alpha, T beta) {
 
 Walk2014Generator::Walk2014Generator() {
   // Setup MPC solver:
-  double mpc_foot_constraint_size = 0.01;
   // TODO: p_lsole_w and p_rsole_w should be computed through
   //       localization + direct kinematics
   Eigen::Vector3d p_lsole_w(0.0,  0.05, 0.0);
@@ -136,7 +135,7 @@ Walk2014Generator::Walk2014Generator() {
     single_support_duration_,
     double_support_duration_,
     com_target_height_,
-    mpc_foot_constraint_size,
+    mpc_foot_constraint_size_,
     p_com_w,
     p_zmp_w
   );
@@ -480,6 +479,13 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
   Pose3f leftFoot  = Pose3f(R_left_torso_f, p_left_torso_f);
   Pose3f rightFoot = Pose3f(R_right_torso_f, p_right_torso_f);
 
+  // Log data:
+  com_file << p_torso_w_desired.transpose() << std::endl;
+  zmp_file << p_zmp_w_desired.transpose() << std::endl;
+  lsole_file << T_left_w.head<3>().transpose() << std::endl;
+  rsole_file << T_right_w.head<3>().transpose() << std::endl;
+  if (control_iter_ == 0 && mpc_iter_ == 0) supp_file << T_supp_w_t0.transpose() << std::endl;
+
   // Update state of iters:
   control_iter_ = (control_iter_ + 1) %
       ((int) std::round(mpc_timestep_ / controller_timestep_));
@@ -512,13 +518,6 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
       walking_state_ = WalkingState::DoubleSupport;
     }
   }
-
-  // Log data:
-  com_file << p_torso_w_desired.transpose() << std::endl;
-  zmp_file << p_zmp_w_desired.transpose() << std::endl;
-  lsole_file << T_left_w.head<3>().transpose() << std::endl;
-  rsole_file << T_right_w.head<3>().transpose() << std::endl;
-  if (mpc_iter_ == 0) supp_file << T_supp_w_t0.transpose() << std::endl;
 
   /****************************************************************************/
 

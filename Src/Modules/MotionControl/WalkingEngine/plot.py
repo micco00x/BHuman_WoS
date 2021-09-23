@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import numpy as np
 
 class Trajectory:
@@ -29,6 +30,19 @@ def read_position_file(path):
     trajectory = Trajectory(xx, yy, zz)
     return trajectory
 
+# Read file composed of list of support foot at mpc_iter = 0:
+def read_support_foot_file(path):
+    l_supp = []
+    with open(path) as f:
+        for l in f.readlines():
+            p = l.rstrip('\n').split()
+            x = float(p[0])
+            y = float(p[1])
+            z = float(p[2])
+            theta = float(p[3])
+            l_supp.append((x, y, z, theta))
+    return l_supp
+
 if __name__ == '__main__':
     com_file_path = '/tmp/com.txt'
     zmp_file_path = '/tmp/zmp.txt'
@@ -41,29 +55,51 @@ if __name__ == '__main__':
     lsole_trajectory = read_position_file(lsole_file_path)
     rsole_trajectory = read_position_file(rsole_file_path)
 
-    plt.subplot(2, 1, 1)
-    plt.title('CoM/ZMP')
-    plt.xlabel('x')
-    plt.ylabel('y')
+    l_supp = read_support_foot_file(supp_file_path)
 
-    plt.plot(com_trajectory.x, com_trajectory.y, label='CoM')
-    plt.plot(zmp_trajectory.x, zmp_trajectory.y, label='ZMP')
+    fig = plt.figure()
 
-    plt.legend()
-    plt.grid()
+    ### Subplot 1 ###
+    ax1 = fig.add_subplot(2, 1, 1)
+    ax1.set_xlabel('x')
+    ax1.set_ylabel('y')
 
-    plt.subplot(2, 1, 2)
-    plt.title('Feet')
-    plt.xlabel('t')
-    plt.ylabel('z')
+    ax1.plot(com_trajectory.x, com_trajectory.y, label='CoM')
+    ax1.plot(zmp_trajectory.x, zmp_trajectory.y, label='ZMP')
+    #ax1.plot(lsole_trajectory.x, lsole_trajectory.y, label='lsole')
+    #ax1.plot(rsole_trajectory.x, rsole_trajectory.y, label='rsole')
+
+    support_foot_size = 0.05
+    for support_foot_configuration in l_supp:
+        (x, y, z, theta) = support_foot_configuration
+        x0 = x - support_foot_size / 2.0
+        y0 = y - support_foot_size / 2.0
+        rect = patches.Rectangle(
+            (x0, y0), support_foot_size, support_foot_size,
+            linewidth=1, edgecolor='g', facecolor='none')
+        ax1.add_patch(rect)
+
+    ax1.legend()
+    ax1.grid()
+    ax1.axis('equal')
+
+    ### Subplot 2 ###
+    ax2 = fig.add_subplot(2, 1, 2)
+    ax2.set_xlabel('t')
+    ax2.set_ylabel('z')
 
     delta_t = 0.01
     samples = lsole_trajectory.z.shape[0]
 
     tt = np.linspace(0.0, delta_t * samples, samples)
-    plt.plot(tt, lsole_trajectory.z, label='lsole')
-    plt.plot(tt, rsole_trajectory.z, label='rsole')
+    #ax2.plot(tt, lsole_trajectory.x, label='lsole x')
+    #ax2.plot(tt, lsole_trajectory.y, label='lsole y')
+    #ax2.plot(tt, rsole_trajectory.x, label='rsole x')
+    #ax2.plot(tt, rsole_trajectory.y, label='rsole y')
+    ax2.plot(tt, lsole_trajectory.z, label='lsole')
+    ax2.plot(tt, rsole_trajectory.z, label='rsole')
 
-    plt.legend()
-    plt.grid()
+    ax2.legend()
+    ax2.grid()
+
     plt.show()
