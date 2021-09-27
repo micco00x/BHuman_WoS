@@ -190,11 +190,9 @@ class MPCSolver{
     comVel << nextStateX(1),nextStateY(1),nextStateZ(1);
     zmpPos << nextStateX(2),nextStateY(2),nextStateZ(2);
 
-    ++controlIter;
-    mpcIter = floor(controlIter*controlTimeStep/mpcTimeStep);
-    if(mpcIter>=S+D){
-      controlIter = 0;
-      mpcIter = 0;
+    controlIter = (controlIter + 1) % ((int) std::round(mpcTimeStep / controlTimeStep));
+    if (controlIter == 0) {
+      mpcIter = (mpcIter + 1) % (S + D);
       footstepCounter++;
     }
   }
