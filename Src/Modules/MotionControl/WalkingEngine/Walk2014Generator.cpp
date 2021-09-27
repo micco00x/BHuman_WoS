@@ -432,16 +432,8 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
   //std::cerr << "MPC solved in " << elapsed_seconds.count() << std::endl;
 
   // Compute pose of support and swing foot:
-  const auto& p_torso_w_desired = mpc_solver_ptr_->getOptimalCoMPosition();
+  const auto& p_com_w_desired = mpc_solver_ptr_->getOptimalCoMPosition();
   const auto& p_zmp_w_desired = mpc_solver_ptr_->getOptimalZMPPosition();
-  Pose T_left_w_t0(
-      starting_configuration_.qL_.head<3>(),
-      Rz(starting_configuration_.qL_.w())
-  );
-  Pose T_right_w_t0(
-      starting_configuration_.qR_.head<3>(),
-      Rz(starting_configuration_.qR_.w())
-  );
   Pose T_supp_w_t0(
       starting_configuration_.getSupportFootConfiguration().head<3>(),
       Rz(starting_configuration_.getSupportFootConfiguration().w())
@@ -451,22 +443,20 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
   double s = 1.0;
   if (t < single_support_duration_) s = t / single_support_duration_;
   auto T_swing_w_desired = swing_foot_trajectory_(s);
+  auto T_swing_supp_desired = T_supp_w_t0.inv() * T_swing_w_desired;
 
-  Pose T_left_w_desired;
-  Pose T_right_w_desired;
+  Pose T_torso_w_desired(p_com_w_desired, T_supp_w_t0.orientation);
+
+  Pose T_left_torso_desired;
+  Pose T_right_torso_desired;
 
   if (starting_configuration_.getSupportFoot() == Foot::LEFT) {
-    T_left_w_desired  = T_left_w_t0;
-    T_right_w_desired = T_swing_w_desired;
+    T_left_torso_desired = T_torso_w_desired.inv() * T_supp_w_t0;
+    T_right_torso_desired = T_left_torso_desired * T_swing_supp_desired;
   } else {
-    T_left_w_desired  = T_swing_w_desired;
-    T_right_w_desired = T_right_w_t0;
+    T_right_torso_desired = T_torso_w_desired.inv() * T_supp_w_t0;
+    T_left_torso_desired = T_right_torso_desired * T_swing_supp_desired;
   }
-
-  Pose T_torso_w_desired(p_torso_w_desired, T_supp_w_t0.orientation);
-  Pose T_w_torso_desired = T_torso_w_desired.inv();
-  Pose T_left_torso_desired  = T_w_torso_desired * T_left_w_desired;
-  Pose T_right_torso_desired = T_w_torso_desired * T_right_w_desired;
 
   // Setup data for IK:
   Eigen::Matrix3f R_left_torso = T_left_torso_desired.orientation.cast<float>();
@@ -477,10 +467,10 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
   Pose3f rightFoot = Pose3f(R_right_torso, p_right_torso);
 
   // Log data:
-  com_file << p_torso_w_desired.transpose() << std::endl;
+  com_file << p_com_w_desired.transpose() << std::endl;
   zmp_file << p_zmp_w_desired.transpose() << std::endl;
-  lsole_file << T_left_w_desired.position.transpose() << std::endl;
-  rsole_file << T_right_w_desired.position.transpose() << std::endl;
+  lsole_file << T_left_torso_desired.position.transpose() << std::endl;
+  rsole_file << T_right_torso_desired.position.transpose() << std::endl;
   if (control_iter_ == 0 && mpc_iter_ == 0) supp_file << T_supp_w_t0.position.transpose() << " " << T_supp_w_t0.orientation.eulerAngles(2, 1, 0).x() << std::endl;
 
   // Update state of iters:
