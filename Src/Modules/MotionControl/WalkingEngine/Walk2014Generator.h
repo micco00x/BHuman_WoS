@@ -207,6 +207,10 @@ class Walk2014Generator : public Walk2014GeneratorBase
           orientation * pose.orientation);
     }
 
+    Eigen::Vector3d operator*(const Eigen::Vector3d& p) {
+      return orientation * p + position;
+    }
+
     Pose inv() const {
       return Pose(
           -orientation.transpose() * position,
