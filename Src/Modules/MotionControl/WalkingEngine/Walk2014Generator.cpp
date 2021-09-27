@@ -439,6 +439,7 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
       Rz(starting_configuration_.getSupportFootConfiguration().w())
   );
   Eigen::Vector3d p_com_supp_desired = T_supp_w_t0.inv() * p_com_w_desired;
+  Pose T_torso_supp_desired(p_com_supp_desired, Eigen::Matrix3d::Identity());
 
   double t = controller_timestep_ * control_iter_ + mpc_timestep_ * mpc_iter_;
   double s = 1.0;
@@ -450,12 +451,10 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
   Pose T_right_torso_desired;
 
   if (starting_configuration_.getSupportFoot() == Foot::LEFT) {
-    Eigen::Matrix3d R_left_torso = Eigen::Matrix3d::Identity();
-    T_left_torso_desired  = Pose(-R_left_torso * p_com_supp_desired, R_left_torso);
+    T_left_torso_desired = T_torso_supp_desired.inv();
     T_right_torso_desired = T_left_torso_desired * T_swing_supp_desired;
   } else {
-    Eigen::Matrix3d R_right_torso = Eigen::Matrix3d::Identity();
-    T_right_torso_desired = Pose(-R_right_torso * p_com_supp_desired, R_right_torso);
+    T_right_torso_desired = T_torso_supp_desired.inv();
     T_left_torso_desired  = T_right_torso_desired * T_swing_supp_desired;
   }
 
