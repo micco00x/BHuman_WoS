@@ -134,6 +134,16 @@ Walk2014Generator::Walk2014Generator() {
   Pose T_lsole_w = T_torso_w * T_lsole_torso;
   Pose T_rsole_w = T_torso_w * T_rsole_torso;
 
+  Eigen::Vector4d qL_init, qR_init;
+  qL_init << T_lsole_w.position, T_lsole_w.orientation.eulerAngles(2, 1, 0).x();
+  qR_init << T_rsole_w.position, T_rsole_w.orientation.eulerAngles(2, 1, 0).x();
+  starting_configuration_ = Configuration(
+    qL_init,
+    qR_init,
+    Foot::RIGHT,
+    0.0
+  );
+
   // Setup MPC solver:
   const Eigen::Vector3d& p_lsole_w = T_lsole_w.position;
   const Eigen::Vector3d& p_rsole_w = T_rsole_w.position;
@@ -152,80 +162,22 @@ Walk2014Generator::Walk2014Generator() {
     p_zmp_w
   );
 
-  footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.0,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.0, -0.05, 0.0, 0.0),
-      Foot::RIGHT,
-      0.0)
-  );
-  footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.075,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.0,  -0.05, 0.0, 0.0),
-      Foot::LEFT,
-      0.025)
-  );
-  footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.075,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.150, -0.05, 0.0, 0.0),
-      Foot::RIGHT,
-      0.025)
-  );
-  footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.225,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.150, -0.05, 0.0, 0.0),
-      Foot::LEFT,
-      0.025)
-  );
-  footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.225,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.300, -0.05, 0.0, 0.0),
-      Foot::RIGHT,
-      0.025)
-  );
-  footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.375,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.300, -0.05, 0.0, 0.0),
-      Foot::LEFT,
-      0.025)
-  );
-  footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.375,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.450, -0.05, 0.0, 0.0),
-      Foot::RIGHT,
-      0.025)
-  );
-  footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.525,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.450, -0.05, 0.0, 0.0),
-      Foot::LEFT,
-      0.025)
-  );
-  footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.525,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.600, -0.05, 0.0, 0.0),
-      Foot::RIGHT,
-      0.025)
-  );
-  footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.675,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.600, -0.05, 0.0, 0.0),
-      Foot::LEFT,
-      0.025)
-  );
-  footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.675,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.750, -0.05, 0.0, 0.0),
-      Foot::RIGHT,
-      0.025)
-  );
-  footstep_plan_.push_back(Configuration(
-      Eigen::Vector4d(0.750,  0.05, 0.0, 0.0),
-      Eigen::Vector4d(0.750, -0.05, 0.0, 0.0),
-      Foot::LEFT,
-      0.025)
-  );
+  if (tcp_client_.connectToServer(ip_addr_.c_str(), port_)) {
+    tcp_client_.subscribeToFootstepPlan(&Walk2014Generator::footstepPlanCallback, this);
+  } else {
+    std::cerr << "Cannot connect to server." << std::endl;
+  }
+}
 
-  starting_configuration_ = footstep_plan_.front();
+void
+Walk2014Generator::footstepPlanCallback(const FootstepPlan& footstep_plan) {
+  const std::lock_guard<std::mutex> lock(footstepPlanMutex_);
+  footstep_plan_ = footstep_plan;
+
+  std::cerr << "Footstep plan received." << std::endl;
+  for (const auto& configuration : footstep_plan_) {
+    std::cerr << configuration.to_string() << std::endl;
+  }
 }
 
 void Walk2014Generator::update(WalkGenerator& generator)
@@ -290,6 +242,8 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
                                    WalkGenerator::WalkMode walkMode,
                                    const std::function<Pose3f(float phase)>& getKickFootOffset)
 {
+  const std::lock_guard<std::mutex> lock(footstepPlanMutex_);
+
   //std::cerr << "Walk2014Generator::update (generator.t=" << generator.t << ")" << std::endl;
   std::string walking_state_str;
   if (walking_state_ == WalkingState::Standing) {

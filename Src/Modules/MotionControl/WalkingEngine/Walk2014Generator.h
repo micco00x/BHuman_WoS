@@ -46,6 +46,7 @@
 // STL
 #include <deque>
 #include <functional>
+#include <mutex>
 
 // BHuman
 #include "Representations/Configuration/GlobalOptions.h"
@@ -65,6 +66,9 @@
 
 // MPC
 #include "MPCSolver.hpp"
+
+#include "Configuration.hpp"
+#include "TCPClient.hpp"
 
 MODULE(Walk2014Generator,
 {,
@@ -183,11 +187,6 @@ class Walk2014Generator : public Walk2014GeneratorBase
     Stopping /*!< Similar to double support phase, but executing last element of footstep plan. */
   };
 
-  enum class Foot {
-    LEFT,
-    RIGHT
-  };
-
   class Pose {
    public:
     Pose() :
@@ -221,77 +220,6 @@ class Walk2014Generator : public Walk2014GeneratorBase
     Eigen::Matrix3d orientation;
   };
 
-  class Configuration {
-   public:
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-
-    Configuration() = default;
-
-    Configuration(
-        const Eigen::Vector4d& qL,
-        const Eigen::Vector4d& qR,
-        Foot support_foot,
-        double h_z) :
-        qL_(qL),
-        qR_(qR),
-        support_foot_(support_foot),
-        h_z_(h_z) {
-
-    }
-
-    Foot getSupportFoot() const {
-      return support_foot_;
-    }
-
-    const Eigen::Vector4d& getSupportFootConfiguration() const {
-      if (support_foot_ == Foot::LEFT) {
-        return qL_;
-      } else {
-        return qR_;
-      }
-    }
-
-    const Eigen::Vector4d& getSwingFootConfiguration() const {
-      if (support_foot_ == Foot::LEFT) {
-        return qR_;
-      } else {
-        return qL_;
-      }
-    }
-
-    void setSupportFoot(Foot support_foot) {
-      support_foot_ = support_foot;
-    }
-
-    void setSwingFootTrajectoryHeight(double h_z) {
-      h_z_ = h_z;
-    }
-
-    std::string to_string() {
-      std::string support_foot_str = "LEFT";
-      if (support_foot_ == Foot::RIGHT) {
-        support_foot_str = "RIGHT";
-      }
-      return std::string("<(") +
-          std::to_string(qL_.x()) + ", " +
-          std::to_string(qL_.y()) + ", " +
-          std::to_string(qL_.z()) + ", " + 
-          std::to_string(qL_.w()) + "), " +
-          "(" +
-          std::to_string(qR_.x()) + ", " +
-          std::to_string(qR_.y()) + ", " +
-          std::to_string(qR_.z()) + ", " +
-          std::to_string(qR_.w()) + "), " +
-          std::to_string(h_z_) + ", " +
-          support_foot_str + ">";
-    }
-
-    Eigen::Vector4d qL_;
-    Eigen::Vector4d qR_;
-    Foot support_foot_;
-    double h_z_;
-  };
-
   double com_target_height_ = 0.22;
   double mpc_foot_constraint_size_ = 0.05;
   double single_support_duration_ = 0.3;
@@ -310,7 +238,7 @@ class Walk2014Generator : public Walk2014GeneratorBase
   Configuration starting_configuration_;
   Configuration target_configuration_;
   std::function<Pose(double)> swing_foot_trajectory_;
-  std::deque<Configuration, Eigen::aligned_allocator<Configuration>> footstep_plan_;
+  FootstepPlan footstep_plan_;
 
   // Change N_ to modify prediction horizon.
   static constexpr int N_ = 20;
@@ -320,6 +248,13 @@ class Walk2014Generator : public Walk2014GeneratorBase
   static constexpr int numInequalityConstraints_ = N_ * 3;
   std::shared_ptr<mpcSolver::MPCSolver<numVariables_, numEqualityConstraints_, numInequalityConstraints_>> mpc_solver_ptr_;
   std::vector<Eigen::VectorXd> mpc_plan_;
+
+  const std::string ip_addr_ = "127.0.0.1";
+  const int port_ = 1999;
+  TCPClient tcp_client_;
+  std::mutex footstepPlanMutex_;
+
+  void footstepPlanCallback(const FootstepPlan& footstep_plan);
 
   /**
    * This method is called when the representation provided needs to be updated.
