@@ -58,7 +58,8 @@ class MPCSolver{
     Eigen::MatrixXd mapping(N_,plan.size());
     for (int j = 0; j < static_cast<int>(plan.size()); j++) {
       for (int i = 0; i < N_; i++) {
-        mapping(i,j) = clamp(- (double)i/D + 1 + (double)(S-mpcIter+j*(S+D))/D, 0, 1) - clamp(- (double)i/D + 1 + (double)(S-mpcIter+(j-1)*(S+D))/D, 0, 1);
+        mapping(i,j) = clamp(-(double)(i+1)/D + 1 + (double)(S-mpcIter +     j * (S+D))/D, 0, 1) -
+                       clamp(-(double)(i+1)/D + 1 + (double)(S-mpcIter + (j-1) * (S+D))/D, 0, 1);
       }
     }
     for (int i = 1; i < N_; i++) {

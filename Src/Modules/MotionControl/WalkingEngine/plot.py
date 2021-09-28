@@ -60,7 +60,7 @@ if __name__ == '__main__':
     fig = plt.figure()
 
     ### Subplot 1 ###
-    ax1 = fig.add_subplot(2, 1, 1)
+    ax1 = fig.add_subplot(2, 2, 1)
     ax1.set_xlabel('x')
     ax1.set_ylabel('y')
 
@@ -84,7 +84,7 @@ if __name__ == '__main__':
     ax1.axis('equal')
 
     ### Subplot 2 ###
-    ax2 = fig.add_subplot(2, 1, 2)
+    ax2 = fig.add_subplot(2, 2, 2)
     ax2.set_xlabel('t')
     ax2.set_ylabel('z')
 
@@ -101,5 +101,25 @@ if __name__ == '__main__':
 
     ax2.legend()
     ax2.grid()
+
+    ### Subplot 3 ###
+    ax3 = fig.add_subplot(2, 2, 3)
+    ax3.set_xlabel('t')
+    ax3.set_ylabel('ZMP.x')
+
+    ax3.plot(tt, zmp_trajectory.x, label='ZMP.x')
+
+    ax3.legend()
+    ax3.grid()
+    
+    ### Subplot 4 ###
+    ax3 = fig.add_subplot(2, 2, 4)
+    ax3.set_xlabel('t')
+    ax3.set_ylabel('ZMP.y')
+
+    ax3.plot(tt, zmp_trajectory.y, label='ZMP.y')
+
+    ax3.legend()
+    ax3.grid()
 
     plt.show()
