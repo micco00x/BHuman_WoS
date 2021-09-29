@@ -92,10 +92,10 @@ if __name__ == '__main__':
     samples = lsole_trajectory.z.shape[0]
 
     tt = np.linspace(0.0, delta_t * samples, samples)
-    #ax2.plot(tt, lsole_trajectory.x, label='lsole x')
-    #ax2.plot(tt, lsole_trajectory.y, label='lsole y')
-    #ax2.plot(tt, rsole_trajectory.x, label='rsole x')
-    #ax2.plot(tt, rsole_trajectory.y, label='rsole y')
+    ax2.plot(tt, lsole_trajectory.x, label='lsole x')
+    ax2.plot(tt, lsole_trajectory.y, label='lsole y')
+    ax2.plot(tt, rsole_trajectory.x, label='rsole x')
+    ax2.plot(tt, rsole_trajectory.y, label='rsole y')
     ax2.plot(tt, lsole_trajectory.z, label='lsole')
     ax2.plot(tt, rsole_trajectory.z, label='rsole')
 

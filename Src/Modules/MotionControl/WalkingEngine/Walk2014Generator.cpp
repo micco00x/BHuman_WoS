@@ -168,6 +168,7 @@ Walk2014Generator::Walk2014Generator() {
   } else {
     std::cerr << "Cannot connect to server." << std::endl;
   }
+  std::cerr << "Done." << std::endl;
 }
 
 void
@@ -245,7 +246,6 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
 {
   const std::lock_guard<std::mutex> lock(footstepPlanMutex_);
 
-  //std::cerr << "Walk2014Generator::update (generator.t=" << generator.t << ")" << std::endl;
   std::string walking_state_str;
   if (walking_state_ == WalkingState::Standing) {
     walking_state_str = "Standing";
@@ -259,13 +259,6 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
     walking_state_str = "Stopping";
   }
 
-  /*auto err_left = (Eigen::Matrix3f::Identity() - theRobotModel.soleLeft.rotation).norm();
-  auto err_right = (Eigen::Matrix3f::Identity() - theRobotModel.soleRight.rotation).norm();
-
-  if (err_left > 0.1 || err_right > 0.1) std::cerr << "WalkingState::" << walking_state_str << std::endl;
-  if (err_left > 0.1) std::cerr << "theRobotModel.soleLeft.rotation error: " << err_left << std::endl;
-  if (err_right > 0.1) std::cerr << "theRobotModel.soleRight.rotation error: " << err_right << std::endl;*/
-
   // Update walking data:
   if (mpc_iter_ == 0 && control_iter_ == 0) {
     // Retrieve data from footstep plan:
@@ -274,11 +267,6 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
     } else {
       target_configuration_ = starting_configuration_;
       target_configuration_.setSwingFootTrajectoryHeight(0.0);
-      if (starting_configuration_.getSupportFoot() == Foot::LEFT) {
-        target_configuration_.setSupportFoot(Foot::RIGHT);
-      } else {
-        target_configuration_.setSupportFoot(Foot::LEFT);
-      }
     }
 
     // Send target configuration to footstep planner:
@@ -291,8 +279,14 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
     // Setup swing foot trajectory:
     swing_foot_trajectory_ = 
         [&](double s) {
-          const auto& T0 = starting_configuration_.getSwingFootConfiguration();
-          const auto& Tf = target_configuration_.getSupportFootConfiguration();
+          Eigen::Vector4d T0, Tf;
+          T0 = starting_configuration_.getSwingFootConfiguration();
+          if (walking_state_ == WalkingState::Standing ||
+              walking_state_ == WalkingState::Starting) {
+            Tf = starting_configuration_.getSwingFootConfiguration();
+          } else {
+            Tf = target_configuration_.getSupportFootConfiguration();
+          }
           double h_z = target_configuration_.h_z_;
           double s_h = 0.5;
           double z0 = T0.z();
@@ -361,20 +355,6 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
         const auto& qSwingFinal   = footstep_plan_[1].getSwingFootConfiguration();
         Eigen::Vector4d qMiddleFinal = (qSupportFinal + qSwingFinal) / 2.0;
         mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
-        mpc_plan_.push_back(qMiddleFinal);
-        mpc_plan_.push_back(qMiddleFinal);
-      } else if (footstep_plan_.size() >= 1) {
-        const auto& qSupportFinal = footstep_plan_[0].getSupportFootConfiguration();
-        const auto& qSwingFinal   = footstep_plan_[0].getSwingFootConfiguration();
-        Eigen::Vector4d qMiddleFinal = (qSupportFinal + qSwingFinal) / 2.0;
-        mpc_plan_.push_back(qMiddleFinal);
-        mpc_plan_.push_back(qMiddleFinal);
-        mpc_plan_.push_back(qMiddleFinal);
-      } else {
-        const auto& qSupportFinal = starting_configuration_.getSupportFootConfiguration();
-        const auto& qSwingFinal   = starting_configuration_.getSwingFootConfiguration();
-        Eigen::Vector4d qMiddleFinal = (qSupportFinal + qSwingFinal) / 2.0;
-        mpc_plan_.push_back(qMiddleFinal);
         mpc_plan_.push_back(qMiddleFinal);
         mpc_plan_.push_back(qMiddleFinal);
       }
@@ -449,22 +429,20 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
     } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Starting) {
       walking_state_ = WalkingState::SingleSupport;
     } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::DoubleSupport) {
-      if (!footstep_plan_.empty()) {
-        footstep_plan_.pop_front();
-      }
-      if (!footstep_plan_.empty()) {
-        starting_configuration_ = footstep_plan_.front();
-        walking_state_ = WalkingState::SingleSupport;
-      } else {
-        if (starting_configuration_.getSupportFoot() == Foot::LEFT) {
-          starting_configuration_.setSupportFoot(Foot::RIGHT);
-        } else {
-          starting_configuration_.setSupportFoot(Foot::LEFT);
-        }
-        walking_state_ = WalkingState::SingleSupport;
-      }
+      footstep_plan_.pop_front();
+      starting_configuration_ = footstep_plan_.front();
+      walking_state_ = WalkingState::SingleSupport;
     } else if (mpc_iter_ == S_ && walking_state_ == WalkingState::SingleSupport) {
-      walking_state_ = WalkingState::DoubleSupport;
+      if (footstep_plan_.size() > 2) {
+        walking_state_ = WalkingState::DoubleSupport;
+      } else {
+        walking_state_ = WalkingState::Stopping;
+      }
+    } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Stopping) {
+      footstep_plan_.pop_front();
+      starting_configuration_ = footstep_plan_.front();
+      walking_state_ = WalkingState::Standing;
+      footstep_plan_.clear();
     }
   }
 
