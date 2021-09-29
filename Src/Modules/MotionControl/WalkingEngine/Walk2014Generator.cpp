@@ -251,10 +251,8 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
     walking_state_str = "Standing";
   } else if (walking_state_ == WalkingState::Starting) {
     walking_state_str = "Starting";
-  } else if (walking_state_ == WalkingState::SingleSupport) {
-    walking_state_str = "SingleSupport";
-  } else if (walking_state_ == WalkingState::DoubleSupport) {
-    walking_state_str = "DoubleSupport";
+  } else if (walking_state_ == WalkingState::Walking) {
+    walking_state_str = "Walking";
   } else {
     walking_state_str = "Stopping";
   }
@@ -262,7 +260,7 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
   // Update walking data:
   if (mpc_iter_ == 0 && control_iter_ == 0) {
     // Retrieve data from footstep plan:
-    if (walking_state_ == WalkingState::SingleSupport && footstep_plan_.size() >= 2) {
+    if (walking_state_ == WalkingState::Walking && footstep_plan_.size() >= 2) {
       target_configuration_ = footstep_plan_[1];
     } else {
       target_configuration_ = starting_configuration_;
@@ -344,7 +342,7 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
         mpc_plan_.push_back(qMiddle);
         mpc_plan_.push_back(qMiddle);
       }
-    } else if (walking_state_ == WalkingState::SingleSupport) {
+    } else if (walking_state_ == WalkingState::Walking) {
       mpc_plan_.clear();
       if (footstep_plan_.size() >= 3) {
         mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
@@ -427,15 +425,12 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
       walking_state_ = WalkingState::Starting;
       starting_configuration_ = footstep_plan_.front();
     } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Starting) {
-      walking_state_ = WalkingState::SingleSupport;
-    } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::DoubleSupport) {
+      walking_state_ = WalkingState::Walking;
+    } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Walking) {
       footstep_plan_.pop_front();
       starting_configuration_ = footstep_plan_.front();
-      walking_state_ = WalkingState::SingleSupport;
-    } else if (mpc_iter_ == S_ && walking_state_ == WalkingState::SingleSupport) {
-      if (footstep_plan_.size() > 2) {
-        walking_state_ = WalkingState::DoubleSupport;
-      } else {
+    } else if (mpc_iter_ == S_ && walking_state_ == WalkingState::Walking) {
+      if (footstep_plan_.size() <= 2) {
         walking_state_ = WalkingState::Stopping;
       }
     } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Stopping) {

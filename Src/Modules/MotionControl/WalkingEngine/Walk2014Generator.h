@@ -182,8 +182,7 @@ class Walk2014Generator : public Walk2014GeneratorBase
   enum class WalkingState {
     Standing, /*!< The robot is standing, no footstep plan to execute. */
     Starting, /*!< A footstep plan is available, moving equilibrium from static to dynamic. */
-    SingleSupport, /*!< Single support phase, keep ZMP within support polygon. */
-    DoubleSupport, /*!< Double support phase, keep ZMP within support polygon. */
+    Walking, /*!< Single and double support phases, keep ZMP within support polygon. */
     Stopping /*!< Similar to double support phase, but executing last element of footstep plan. */
   };
 
