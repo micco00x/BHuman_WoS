@@ -17,6 +17,7 @@
 // Eigen
 #include <Eigen/Core>
 
+#include "Configuration.hpp"
 #include "Foot.hpp"
 #include "types.hpp"
 
@@ -41,6 +42,24 @@ class TCPClient {
   void subscribeToFootstepPlan(F&& f, Args&&... args) {
     footstep_plan_thread_ = std::thread(&TCPClient::footstepPlanPoll, this);
     footstepPlanCallback_ = std::bind(f, args..., std::placeholders::_1);
+  }
+
+  bool sendConfiguration(const Configuration& configuration) {
+    const size_t buffer_size = sizeof(double) * 9 + sizeof(Foot);
+    char buffer[buffer_size];
+    const auto& qL = configuration.qL_;
+    const auto& qR = configuration.qR_;
+    Foot support_foot = configuration.getSupportFoot();
+    double h_z = configuration.h_z_;
+    double q[8] = {
+        qL.x(), qL.y(), qL.z(), qL.w(),
+        qR.x(), qR.y(), qR.z(), qR.w()
+    };
+    std::memcpy(buffer, q, sizeof(q));
+    std::memcpy(buffer + sizeof(q), &support_foot, sizeof(support_foot));
+    std::memcpy(buffer + sizeof(q) + sizeof(support_foot), &h_z, sizeof(h_z));
+    
+    return send(sockfd_, buffer, buffer_size, 0) != -1;
   }
 
  private:

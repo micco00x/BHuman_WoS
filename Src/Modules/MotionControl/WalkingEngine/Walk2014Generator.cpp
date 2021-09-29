@@ -162,6 +162,7 @@ Walk2014Generator::Walk2014Generator() {
     p_zmp_w
   );
 
+  std::cerr << "Connecting to server..." << std::endl;
   if (tcp_client_.connectToServer(ip_addr_.c_str(), port_)) {
     tcp_client_.subscribeToFootstepPlan(&Walk2014Generator::footstepPlanCallback, this);
   } else {
@@ -278,6 +279,13 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
       } else {
         target_configuration_.setSupportFoot(Foot::LEFT);
       }
+    }
+
+    // Send target configuration to footstep planner:
+    if (tcp_client_.sendConfiguration(target_configuration_)) {
+      std::cerr << "Sending: " << target_configuration_.to_string() << std::endl;
+    } else {
+      std::cerr << "Cannot send configuration to footstep planner.";
     }
 
     // Setup swing foot trajectory:
