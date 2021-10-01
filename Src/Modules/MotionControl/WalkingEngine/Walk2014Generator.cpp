@@ -174,7 +174,12 @@ Walk2014Generator::Walk2014Generator() {
 void
 Walk2014Generator::footstepPlanCallback(const FootstepPlan& footstep_plan) {
   const std::lock_guard<std::mutex> lock(footstepPlanMutex_);
+
   footstep_plan_ = footstep_plan;
+  if (walking_state_ == WalkingState::Walking ||
+      walking_state_ == WalkingState::Stopping) {
+    footstep_plan_.push_front(starting_configuration_);
+  }
 
   std::cerr << "Footstep plan received." << std::endl;
   for (const auto& configuration : footstep_plan_) {
@@ -421,7 +426,7 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
     mpc_iter_ = (mpc_iter_ + 1) % (S_ + D_);
     // Update walking state:
     if (mpc_iter_ == 0 && walking_state_ == WalkingState::Standing &&
-        !footstep_plan_.empty() && !delay_) {
+        footstep_plan_.size() > 1 && !delay_) {
       walking_state_ = WalkingState::Starting;
       starting_configuration_ = footstep_plan_.front();
     } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Starting) {
