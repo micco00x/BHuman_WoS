@@ -68,6 +68,7 @@ MAKE_MODULE(Walk2014Generator, motionControl);
 
 static const double mmPerM = 1000.0;
 
+std::ifstream init_file("/tmp/init.txt");
 std::ofstream com_file("/tmp/com.txt");
 std::ofstream zmp_file("/tmp/zmp.txt");
 std::ofstream lsole_file("/tmp/lsole.txt");
@@ -120,14 +121,20 @@ angle_difference(T alpha, T beta) {
 }
 
 Walk2014Generator::Walk2014Generator() {
-  double z_torso = 0.24809; // taken from http://doc.aldebaran.com/2-1/family/robots/links_robot.html
+  double x_torso_init = 0.0, y_torso_init = 0.0;
+  double z_torso_init = 0.24809; // taken from http://doc.aldebaran.com/2-1/family/robots/links_robot.html
+  double yaw_torso_init = 0.0;
+  // Read init data if file has been opened successfully:
+  if (init_file) {
+    init_file >> x_torso_init >> y_torso_init >> z_torso_init >> yaw_torso_init;
+  }
   Pose T_torso_w = Pose(
-      Eigen::Vector3d(0.0, 0.0, z_torso),
-      Eigen::Matrix3d::Identity()
+      Eigen::Vector3d(x_torso_init, y_torso_init, z_torso_init),
+      Rz(yaw_torso_init)
   );
-  Eigen::Vector3d p_lsole_torso = Eigen::Vector3d(0.0, 0.05, -z_torso);
+  Eigen::Vector3d p_lsole_torso = Eigen::Vector3d(0.0, 0.05, -z_torso_init);
   Eigen::Matrix3d R_lsole_torso = Eigen::Matrix3d::Identity();
-  Eigen::Vector3d p_rsole_torso = Eigen::Vector3d(0.0, -0.05, -z_torso);
+  Eigen::Vector3d p_rsole_torso = Eigen::Vector3d(0.0, -0.05, -z_torso_init);
   Eigen::Matrix3d R_rsole_torso = Eigen::Matrix3d::Identity();
   Pose T_lsole_torso(p_lsole_torso, R_lsole_torso);
   Pose T_rsole_torso(p_rsole_torso, R_rsole_torso);
@@ -137,6 +144,8 @@ Walk2014Generator::Walk2014Generator() {
   Eigen::Vector4d qL_init, qR_init;
   qL_init << T_lsole_w.position, T_lsole_w.orientation.eulerAngles(2, 1, 0).x();
   qR_init << T_rsole_w.position, T_rsole_w.orientation.eulerAngles(2, 1, 0).x();
+  std::cerr << "qL_init: " << qL_init.transpose() << std::endl;
+  std::cerr << "qR_init: " << qR_init.transpose() << std::endl;
   starting_configuration_ = Configuration(
     qL_init,
     qR_init,
