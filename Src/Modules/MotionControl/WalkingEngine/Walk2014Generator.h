@@ -183,7 +183,8 @@ class Walk2014Generator : public Walk2014GeneratorBase
     Standing, /*!< The robot is standing, no footstep plan to execute. */
     Starting, /*!< A footstep plan is available, moving equilibrium from static to dynamic. */
     Walking, /*!< Single and double support phases, keep ZMP within support polygon. */
-    Stopping /*!< Similar to double support phase, but executing last element of footstep plan. */
+    Stopping, /*!< Similar to double support phase, but executing last element of footstep plan. */
+    Stopped /*!< Discard footstep plans. Robot does not move anymore. */
   };
 
   class Pose {

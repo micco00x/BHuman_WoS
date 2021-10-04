@@ -175,15 +175,33 @@ void
 Walk2014Generator::footstepPlanCallback(const FootstepPlan& footstep_plan) {
   const std::lock_guard<std::mutex> lock(footstepPlanMutex_);
 
+  std::cerr << "Footstep plan received:" << std::endl;
+  for (const auto& configuration : footstep_plan) {
+    std::cerr << configuration.to_string() << std::endl;
+  }
+
   footstep_plan_ = footstep_plan;
   if (walking_state_ == WalkingState::Walking ||
       walking_state_ == WalkingState::Stopping) {
     footstep_plan_.push_front(starting_configuration_);
-  }
 
-  std::cerr << "Footstep plan received." << std::endl;
-  for (const auto& configuration : footstep_plan_) {
-    std::cerr << configuration.to_string() << std::endl;
+    // Manually replace final Configuration to make the robot stop in
+    // WalkingState::Standing.
+    // TODO: this part should be handled by the footstep planner.
+    Configuration& final_configuration = footstep_plan_.back();
+    if (final_configuration.getSupportFoot() == Foot::LEFT) {
+      Eigen::Vector3d p_lsole_rsole(0.0, 0.10, 0.0);
+      final_configuration.qL_.head<3>() =
+          Rz(final_configuration.qR_.w()) * p_lsole_rsole +
+          final_configuration.qR_.head<3>();
+      final_configuration.qL_.w() = final_configuration.qR_.w();
+    } else {
+      Eigen::Vector3d p_rsole_lsole(0.0, -0.10, 0.0);
+      final_configuration.qR_.head<3>() =
+          Rz(final_configuration.qL_.w()) * p_rsole_lsole +
+          final_configuration.qL_.head<3>();
+      final_configuration.qR_.w() = final_configuration.qL_.w();
+    }
   }
 }
 
@@ -258,8 +276,13 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
     walking_state_str = "Starting";
   } else if (walking_state_ == WalkingState::Walking) {
     walking_state_str = "Walking";
-  } else {
+  } else if (walking_state_ == WalkingState::Stopping) {
     walking_state_str = "Stopping";
+  } else if (walking_state_ == WalkingState::Stopped) {
+    walking_state_str = "Stopped";
+  } else {
+    // NOTE: execution should never get here.
+    walking_state_str = "Unknown";
   }
 
   // Update walking data:
@@ -273,10 +296,12 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
     }
 
     // Send target configuration to footstep planner:
-    if (tcp_client_.sendConfiguration(target_configuration_)) {
-      std::cerr << "Sending: " << target_configuration_.to_string() << std::endl;
-    } else {
-      std::cerr << "Cannot send configuration to footstep planner.";
+    if (walking_state_ != WalkingState::Stopped) {
+      if (tcp_client_.sendConfiguration(target_configuration_)) {
+        std::cerr << "Sending: " << target_configuration_.to_string() << std::endl;
+      } else {
+        std::cerr << "Cannot send configuration to footstep planner.";
+      }
     }
 
     // Setup swing foot trajectory:
@@ -285,7 +310,8 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
           Eigen::Vector4d T0, Tf;
           T0 = starting_configuration_.getSwingFootConfiguration();
           if (walking_state_ == WalkingState::Standing ||
-              walking_state_ == WalkingState::Starting) {
+              walking_state_ == WalkingState::Starting ||
+              walking_state_ == WalkingState::Stopped) {
             Tf = starting_configuration_.getSwingFootConfiguration();
           } else {
             Tf = target_configuration_.getSupportFootConfiguration();
@@ -327,7 +353,8 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
     const auto& qTarget = target_configuration_.getSupportFootConfiguration();
     // Update MPC params:
     Eigen::Vector4d qMiddle = (qSupport + qSwing) / 2.0;
-    if (walking_state_ == WalkingState::Standing) {
+    if (walking_state_ == WalkingState::Standing ||
+        walking_state_ == WalkingState::Stopped) {
       mpc_plan_.clear();
       mpc_plan_.push_back(qMiddle);
       mpc_plan_.push_back(qMiddle);
@@ -441,7 +468,7 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
     } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Stopping) {
       footstep_plan_.pop_front();
       starting_configuration_ = footstep_plan_.front();
-      walking_state_ = WalkingState::Standing;
+      walking_state_ = WalkingState::Stopped;
       footstep_plan_.clear();
     }
   }
