@@ -249,7 +249,7 @@ class Walk2014Generator : public Walk2014GeneratorBase
   std::shared_ptr<mpcSolver::MPCSolver<numVariables_, numEqualityConstraints_, numInequalityConstraints_>> mpc_solver_ptr_;
   std::vector<Eigen::VectorXd> mpc_plan_;
 
-  const std::string ip_addr_ = "127.0.0.1";
+  std::string ip_addr_ = "127.0.0.1";
   const int port_ = 1999;
   TCPClient tcp_client_;
   std::mutex footstepPlanMutex_;

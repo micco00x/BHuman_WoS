@@ -68,6 +68,7 @@ MAKE_MODULE(Walk2014Generator, motionControl);
 
 static const double mmPerM = 1000.0;
 
+std::ifstream ip_addr_file("/tmp/footstep_planner_ip_addr.txt");
 std::ifstream init_file("/tmp/init.txt");
 std::ofstream com_file("/tmp/com.txt");
 std::ofstream zmp_file("/tmp/zmp.txt");
@@ -171,7 +172,12 @@ Walk2014Generator::Walk2014Generator() {
     p_zmp_w
   );
 
-  std::cerr << "Connecting to server..." << std::endl;
+  // Read IP address from file if available:
+  if (ip_addr_file) {
+    ip_addr_file >> ip_addr_;
+  }
+
+  std::cerr << "Connecting to server (ip addr=" << ip_addr_ << ", port=" << port_ << ")..." << std::endl;
   if (tcp_client_.connectToServer(ip_addr_.c_str(), port_)) {
     tcp_client_.subscribeToFootstepPlan(&Walk2014Generator::footstepPlanCallback, this);
   } else {
@@ -309,7 +315,7 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
       if (tcp_client_.sendConfiguration(target_configuration_)) {
         std::cerr << "Sending: " << target_configuration_.to_string() << std::endl;
       } else {
-        std::cerr << "Cannot send configuration to footstep planner.";
+        std::cerr << "Cannot send configuration to footstep planner." << std::endl;
       }
     }
 
