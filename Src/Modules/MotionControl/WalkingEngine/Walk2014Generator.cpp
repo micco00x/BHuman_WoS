@@ -199,24 +199,23 @@ Walk2014Generator::footstepPlanCallback(const FootstepPlan& footstep_plan) {
   if (walking_state_ == WalkingState::Walking ||
       walking_state_ == WalkingState::Stopping) {
     footstep_plan_.push_front(starting_configuration_);
-
-    // Manually replace final Configuration to make the robot stop in
-    // WalkingState::Standing.
-    // TODO: this part should be handled by the footstep planner.
-    Configuration& final_configuration = footstep_plan_.back();
-    if (final_configuration.getSupportFoot() == Foot::LEFT) {
-      Eigen::Vector3d p_lsole_rsole(0.0, 0.10, 0.0);
-      final_configuration.qL_.head<3>() =
-          Rz(final_configuration.qR_.w()) * p_lsole_rsole +
-          final_configuration.qR_.head<3>();
-      final_configuration.qL_.w() = final_configuration.qR_.w();
-    } else {
-      Eigen::Vector3d p_rsole_lsole(0.0, -0.10, 0.0);
-      final_configuration.qR_.head<3>() =
-          Rz(final_configuration.qL_.w()) * p_rsole_lsole +
-          final_configuration.qL_.head<3>();
-      final_configuration.qR_.w() = final_configuration.qL_.w();
-    }
+  }
+  // Manually replace final Configuration to make the robot stop in
+  // WalkingState::Standing.
+  // TODO: this part should be handled by the footstep planner.
+  Configuration& final_configuration = footstep_plan_.back();
+  if (final_configuration.getSupportFoot() == Foot::LEFT) {
+    Eigen::Vector3d p_lsole_rsole(0.0, 0.10, 0.0);
+    final_configuration.qL_.head<3>() =
+        Rz(final_configuration.qR_.w()) * p_lsole_rsole +
+        final_configuration.qR_.head<3>();
+    final_configuration.qL_.w() = final_configuration.qR_.w();
+  } else {
+    Eigen::Vector3d p_rsole_lsole(0.0, -0.10, 0.0);
+    final_configuration.qR_.head<3>() =
+        Rz(final_configuration.qL_.w()) * p_rsole_lsole +
+        final_configuration.qL_.head<3>();
+    final_configuration.qR_.w() = final_configuration.qL_.w();
   }
 }
 
