@@ -281,6 +281,8 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
                                    WalkGenerator::WalkMode walkMode,
                                    const std::function<Pose3f(float phase)>& getKickFootOffset)
 {
+  std::chrono::time_point<std::chrono::system_clock> kc_t0 = std::chrono::system_clock::now();
+
   const std::lock_guard<std::mutex> lock(footstepPlanMutex_);
 
   std::string walking_state_str;
@@ -527,5 +529,13 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
 
   // Head can move freely
   generator.jointRequest.angles[Joints::headPitch] = generator.jointRequest.angles[Joints::headYaw] = JointAngles::ignore;
+
+  // Double check kinematic controller is executed with the right frequency:
+  std::chrono::time_point<std::chrono::system_clock> kc_tf = std::chrono::system_clock::now();
+  std::chrono::duration<double> kc_elapsed_seconds = kc_tf - kc_t0;
+  double kc_delta_t = kc_elapsed_seconds.count();
+  if (kc_delta_t >= controller_timestep_) {
+    std::cerr << "WARN: kinematic controller took " << kc_delta_t << std::endl;
+  }
 }
 
