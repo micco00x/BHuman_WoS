@@ -190,6 +190,13 @@ void
 Walk2014Generator::footstepPlanCallback(const FootstepPlan& footstep_plan) {
   const std::lock_guard<std::mutex> lock(footstepPlanMutex_);
 
+  if (!target_configuration_.isApprox(footstep_plan.front())) {
+    std::cerr << "[WARN]: received footstep plan is not coherent with target configuration" << std::endl;
+    std::cerr << "\ttarget: " << target_configuration_.to_string() << std::endl;
+    std::cerr << "\tfront: " << footstep_plan.front().to_string() << std::endl;
+    return;
+  }
+
   std::cerr << "Footstep plan received:" << std::endl;
   for (const auto& configuration : footstep_plan) {
     std::cerr << configuration.to_string() << std::endl;

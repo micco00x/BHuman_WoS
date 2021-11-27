@@ -9,7 +9,7 @@
 #include "Foot.hpp"
 
 class Configuration {
-  public:
+ public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
   Configuration() = default;
@@ -24,6 +24,15 @@ class Configuration {
       support_foot_(support_foot),
       h_z_(h_z) {
 
+  }
+
+  bool isApprox(const Configuration& rhs, double precision=0.001) const {
+    if (support_foot_ != rhs.support_foot_) {
+      return false;
+    }
+
+    return qL_.isApprox(rhs.qL_, precision) &&
+           qR_.isApprox(rhs.qR_, precision);
   }
 
   Foot getSupportFoot() const {
