@@ -190,6 +190,14 @@ void
 Walk2014Generator::footstepPlanCallback(const FootstepPlan& footstep_plan) {
   const std::lock_guard<std::mutex> lock(footstepPlanMutex_);
 
+  // TODO: this can be removed by making the footstep planner accept a 
+  //       double support configuration inside goal region if one of the two
+  //       footsteps is inside (currently only checking support foot).
+  if (footstep_plan.size() <= 2) {
+    std::cerr << "[WARN]: discarding footstep plan of size <= 2.";
+    return;
+  }
+
   if (!target_configuration_.isApprox(footstep_plan.front())) {
     std::cerr << "[WARN]: received footstep plan is not coherent with target configuration" << std::endl;
     std::cerr << "\ttarget: " << target_configuration_.to_string() << std::endl;
@@ -206,23 +214,6 @@ Walk2014Generator::footstepPlanCallback(const FootstepPlan& footstep_plan) {
   if (walking_state_ == WalkingState::Walking ||
       walking_state_ == WalkingState::Stopping) {
     footstep_plan_.push_front(starting_configuration_);
-  }
-  // Manually replace final Configuration to make the robot stop in
-  // WalkingState::Standing.
-  // TODO: this part should be handled by the footstep planner.
-  Configuration& final_configuration = footstep_plan_.back();
-  if (final_configuration.getSupportFoot() == Foot::LEFT) {
-    Eigen::Vector3d p_lsole_rsole(0.0, 0.10, 0.0);
-    final_configuration.qL_.head<3>() =
-        Rz(final_configuration.qR_.w()) * p_lsole_rsole +
-        final_configuration.qR_.head<3>();
-    final_configuration.qL_.w() = final_configuration.qR_.w();
-  } else {
-    Eigen::Vector3d p_rsole_lsole(0.0, -0.10, 0.0);
-    final_configuration.qR_.head<3>() =
-        Rz(final_configuration.qL_.w()) * p_rsole_lsole +
-        final_configuration.qL_.head<3>();
-    final_configuration.qR_.w() = final_configuration.qL_.w();
   }
 }
 
@@ -319,7 +310,8 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
     }
 
     // Send target configuration to footstep planner:
-    if (walking_state_ != WalkingState::Stopped) {
+    if (walking_state_ != WalkingState::Stopped &&
+        (walking_state_ != WalkingState::Walking || footstep_plan_.size() > 2)) {
       if (tcp_client_.sendConfiguration(target_configuration_)) {
         std::cerr << "Sending: " << target_configuration_.to_string() << std::endl;
       } else {
@@ -542,7 +534,7 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
   std::chrono::duration<double> kc_elapsed_seconds = kc_tf - kc_t0;
   double kc_delta_t = kc_elapsed_seconds.count();
   if (kc_delta_t >= controller_timestep_) {
-    std::cerr << "WARN: kinematic controller took " << kc_delta_t << std::endl;
+    std::cerr << "[WARN]: kinematic controller took " << kc_delta_t << std::endl;
   }
 }
 
