@@ -387,47 +387,47 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
             );
           }
         };
+  }
 
-    const auto& qSupport = starting_configuration_.getSupportFootConfiguration();
-    const auto& qSwing = starting_configuration_.getSwingFootConfiguration();
-    const auto& qTarget = target_configuration_.getSupportFootConfiguration();
-    // Update MPC params:
-    Eigen::Vector4d qMiddle = (qSupport + qSwing) / 2.0;
-    if (walking_state_ == WalkingState::Standing ||
-        walking_state_ == WalkingState::Stopped) {
-      mpc_plan_.clear();
+  const auto& qSupport = starting_configuration_.getSupportFootConfiguration();
+  const auto& qSwing = starting_configuration_.getSwingFootConfiguration();
+  const auto& qTarget = target_configuration_.getSupportFootConfiguration();
+  // Update MPC params:
+  Eigen::Vector4d qMiddle = (qSupport + qSwing) / 2.0;
+  if (walking_state_ == WalkingState::Standing ||
+      walking_state_ == WalkingState::Stopped) {
+    mpc_plan_.clear();
+    mpc_plan_.push_back(qMiddle);
+    mpc_plan_.push_back(qMiddle);
+    mpc_plan_.push_back(qMiddle);
+  } else if (walking_state_ == WalkingState::Starting) {
+    mpc_plan_.clear();
+    if (footstep_plan_.size() >= 2) {
+      mpc_plan_.push_back(qMiddle);
+      mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
+      mpc_plan_.push_back(footstep_plan_[1].getSupportFootConfiguration());
+    } else if (footstep_plan_.size() >= 1) {
+      mpc_plan_.push_back(qMiddle);
+      mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
+      mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
+    } else {
       mpc_plan_.push_back(qMiddle);
       mpc_plan_.push_back(qMiddle);
       mpc_plan_.push_back(qMiddle);
-    } else if (walking_state_ == WalkingState::Starting) {
-      mpc_plan_.clear();
-      if (footstep_plan_.size() >= 2) {
-        mpc_plan_.push_back(qMiddle);
-        mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
-        mpc_plan_.push_back(footstep_plan_[1].getSupportFootConfiguration());
-      } else if (footstep_plan_.size() >= 1) {
-        mpc_plan_.push_back(qMiddle);
-        mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
-        mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
-      } else {
-        mpc_plan_.push_back(qMiddle);
-        mpc_plan_.push_back(qMiddle);
-        mpc_plan_.push_back(qMiddle);
-      }
-    } else if (walking_state_ == WalkingState::Walking) {
-      mpc_plan_.clear();
-      if (footstep_plan_.size() >= 3) {
-        mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
-        mpc_plan_.push_back(footstep_plan_[1].getSupportFootConfiguration());
-        mpc_plan_.push_back(footstep_plan_[2].getSupportFootConfiguration());
-      } else if (footstep_plan_.size() >= 2) {
-        const auto& qSupportFinal = footstep_plan_[1].getSupportFootConfiguration();
-        const auto& qSwingFinal   = footstep_plan_[1].getSwingFootConfiguration();
-        Eigen::Vector4d qMiddleFinal = (qSupportFinal + qSwingFinal) / 2.0;
-        mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
-        mpc_plan_.push_back(qMiddleFinal);
-        mpc_plan_.push_back(qMiddleFinal);
-      }
+    }
+  } else if (walking_state_ == WalkingState::Walking) {
+    mpc_plan_.clear();
+    if (footstep_plan_.size() >= 3) {
+      mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
+      mpc_plan_.push_back(footstep_plan_[1].getSupportFootConfiguration());
+      mpc_plan_.push_back(footstep_plan_[2].getSupportFootConfiguration());
+    } else if (footstep_plan_.size() >= 2) {
+      const auto& qSupportFinal = footstep_plan_[1].getSupportFootConfiguration();
+      const auto& qSwingFinal   = footstep_plan_[1].getSwingFootConfiguration();
+      Eigen::Vector4d qMiddleFinal = (qSupportFinal + qSwingFinal) / 2.0;
+      mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
+      mpc_plan_.push_back(qMiddleFinal);
+      mpc_plan_.push_back(qMiddleFinal);
     }
   }
       
