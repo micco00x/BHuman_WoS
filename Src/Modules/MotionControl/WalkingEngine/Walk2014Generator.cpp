@@ -190,14 +190,6 @@ void
 Walk2014Generator::footstepPlanCallback(const FootstepPlan& footstep_plan) {
   const std::lock_guard<std::mutex> lock(footstepPlanMutex_);
 
-  // TODO: this can be removed by making the footstep planner accept a 
-  //       double support configuration inside goal region if one of the two
-  //       footsteps is inside (currently only checking support foot).
-  if (footstep_plan.size() <= 2) {
-    std::cerr << "[WARN]: discarding footstep plan of size <= 2.";
-    return;
-  }
-
   if (!target_configuration_.isApprox(footstep_plan.front())) {
     std::cerr << "[WARN]: received footstep plan is not coherent with target configuration" << std::endl;
     std::cerr << "\ttarget: " << target_configuration_.to_string() << std::endl;
@@ -310,8 +302,7 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
     }
 
     // Send target configuration to footstep planner:
-    if (walking_state_ != WalkingState::Stopped &&
-        (walking_state_ != WalkingState::Walking || footstep_plan_.size() > 2)) {
+    if (walking_state_ != WalkingState::Stopped) {
       if (tcp_client_.sendConfiguration(target_configuration_)) {
         std::cerr << "Sending: " << target_configuration_.to_string() << std::endl;
       } else {
