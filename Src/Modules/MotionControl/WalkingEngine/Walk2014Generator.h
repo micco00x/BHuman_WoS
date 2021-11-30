@@ -46,6 +46,7 @@
 // STL
 #include <deque>
 #include <functional>
+#include <memory>
 #include <mutex>
 
 // BHuman
@@ -69,6 +70,7 @@
 
 #include "Configuration.hpp"
 #include "TCPClient.hpp"
+#include "TimingLaw.hpp"
 
 MODULE(Walk2014Generator,
 {,
@@ -237,6 +239,7 @@ class Walk2014Generator : public Walk2014GeneratorBase
   WalkingState walking_state_ = WalkingState::Standing;
   Configuration starting_configuration_;
   Configuration target_configuration_;
+  std::shared_ptr<labrob::TimingLaw> swing_foot_timing_law_ptr_;
   std::function<Pose(double)> swing_foot_trajectory_;
   FootstepPlan footstep_plan_;
   bool waiting_footstep_plan_ = false;
