@@ -285,6 +285,29 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
 
   const std::lock_guard<std::mutex> lock(footstepPlanMutex_);
 
+  if (control_iter_ == 0) {
+    // Update walking state:
+    if (mpc_iter_ == 0 && walking_state_ == WalkingState::Standing &&
+        footstep_plan_.size() > 1 && !delay_) {
+      walking_state_ = WalkingState::Starting;
+      starting_configuration_ = footstep_plan_.front();
+    } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Starting) {
+      walking_state_ = WalkingState::Walking;
+    } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Walking) {
+      footstep_plan_.pop_front();
+      starting_configuration_ = footstep_plan_.front();
+    } else if (mpc_iter_ == S_ && walking_state_ == WalkingState::Walking) {
+      if (footstep_plan_.size() <= 2) {
+        walking_state_ = WalkingState::Stopping;
+      }
+    } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Stopping) {
+      footstep_plan_.pop_front();
+      starting_configuration_ = footstep_plan_.front();
+      walking_state_ = WalkingState::Stopped;
+      footstep_plan_.clear();
+    }
+  }
+
   std::string walking_state_str;
   if (walking_state_ == WalkingState::Standing) {
     walking_state_str = "Standing";
@@ -477,26 +500,6 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
   if (delay_) --delay_;
   if (control_iter_ == 0) {
     mpc_iter_ = (mpc_iter_ + 1) % (S_ + D_);
-    // Update walking state:
-    if (mpc_iter_ == 0 && walking_state_ == WalkingState::Standing &&
-        footstep_plan_.size() > 1 && !delay_) {
-      walking_state_ = WalkingState::Starting;
-      starting_configuration_ = footstep_plan_.front();
-    } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Starting) {
-      walking_state_ = WalkingState::Walking;
-    } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Walking) {
-      footstep_plan_.pop_front();
-      starting_configuration_ = footstep_plan_.front();
-    } else if (mpc_iter_ == S_ && walking_state_ == WalkingState::Walking) {
-      if (footstep_plan_.size() <= 2) {
-        walking_state_ = WalkingState::Stopping;
-      }
-    } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Stopping) {
-      footstep_plan_.pop_front();
-      starting_configuration_ = footstep_plan_.front();
-      walking_state_ = WalkingState::Stopped;
-      footstep_plan_.clear();
-    }
   }
 
   /****************************************************************************/
