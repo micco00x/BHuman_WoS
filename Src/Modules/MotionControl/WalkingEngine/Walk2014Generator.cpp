@@ -428,9 +428,18 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
       Rz(starting_configuration_.getSupportFootConfiguration().w())
   );
   Eigen::Vector3d p_com_supp_desired = T_supp_w_t0.inv() * p_com_w_desired;
-  Pose T_torso_supp_desired(p_com_supp_desired, Eigen::Matrix3d::Identity());
 
-  double t = controller_timestep_ * control_iter_ + mpc_timestep_ * mpc_iter_;
+  double t = controller_timestep_ * (control_iter_ + 1) + mpc_timestep_ * mpc_iter_;
+
+  // Compute desired orientation of the torso:
+  double theta_torso_supp_tf = angle_difference(
+      target_configuration_.getSupportFootConfiguration().w(),
+      target_configuration_.getSwingFootConfiguration().w()) / 2.0;
+  double theta_torso_supp_t = theta_torso_supp_tf * t /
+      (single_support_duration_ + double_support_duration_);
+
+  Pose T_torso_supp_desired(p_com_supp_desired, Rz(theta_torso_supp_t));
+
   double s = 1.0;
   if (t < single_support_duration_) s = swing_foot_timing_law_ptr_->eval(t);
   auto T_swing_w_desired = swing_foot_trajectory_(s);
