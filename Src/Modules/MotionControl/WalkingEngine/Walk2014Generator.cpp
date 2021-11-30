@@ -155,7 +155,12 @@ Walk2014Generator::Walk2014Generator() {
   );
 
   // Setup swing foot timing law:
-  swing_foot_timing_law_ptr_ = std::make_shared<labrob::LinearTimingLaw>(single_support_duration_);
+  //swing_foot_timing_law_ptr_ =
+  //    std::make_shared<labrob::LinearTimingLaw>(single_support_duration_);
+  swing_foot_timing_law_ptr_ =
+      std::make_shared<labrob::TrapezoidalAccelerationTimingLaw>(
+          single_support_duration_, 0.3
+      );
 
   // Setup MPC solver:
   const Eigen::Vector3d& p_lsole_w = T_lsole_w.position;
@@ -335,8 +340,8 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
           double a = (h_z - z0 + s_h * (z0 - zf)) / (s_h * (s_h - 1.0));
           double b = zf - z0 - a;
           double c = z0;
-          double s_0 = 0.2;
-          double s_f = 0.8;
+          double s_0 = 0.0;
+          double s_f = 1.0;
           double s_bar = (s - s_0) / (s_f - s_0);
           double swing_x = T0.x() + (Tf.x() - T0.x()) * s_bar;
           double swing_y = T0.y() + (Tf.y() - T0.y()) * s_bar;
