@@ -239,6 +239,7 @@ class Walk2014Generator : public Walk2014GeneratorBase
   Configuration target_configuration_;
   std::function<Pose(double)> swing_foot_trajectory_;
   FootstepPlan footstep_plan_;
+  bool waiting_footstep_plan_ = false;
 
   // Change N_ to modify prediction horizon.
   static constexpr int N_ = 20;

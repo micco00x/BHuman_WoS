@@ -189,6 +189,8 @@ Walk2014Generator::Walk2014Generator() {
 void
 Walk2014Generator::footstepPlanCallback(const FootstepPlan& footstep_plan) {
   const std::lock_guard<std::mutex> lock(footstepPlanMutex_);
+  
+  waiting_footstep_plan_ = false;
 
   if (!target_configuration_.isApprox(footstep_plan.front())) {
     std::cerr << "[WARN]: received footstep plan is not coherent with target configuration" << std::endl;
@@ -302,8 +304,9 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
     }
 
     // Send target configuration to footstep planner:
-    if (walking_state_ != WalkingState::Stopped) {
-      if (tcp_client_.sendConfiguration(target_configuration_)) {
+    if (walking_state_ != WalkingState::Stopped && !waiting_footstep_plan_) {
+      if (tcp_client_.sendConfiguration(target_configuration_) ) {
+        waiting_footstep_plan_ = true;
         std::cerr << "Sending: " << target_configuration_.to_string() << std::endl;
       } else {
         std::cerr << "Cannot send configuration to footstep planner." << std::endl;
