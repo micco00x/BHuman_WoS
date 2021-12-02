@@ -114,7 +114,7 @@ Walk2014Generator::Walk2014Generator() {
   //    std::make_shared<labrob::LinearTimingLaw>(single_support_duration_);
   swing_foot_timing_law_ptr_ =
       std::make_shared<labrob::TrapezoidalAccelerationTimingLaw>(
-          single_support_duration_, 0.3
+          single_support_duration_, 0.4
       );
 
   // Setup MPC solver:
@@ -375,8 +375,11 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
   Pose T_torso_supp_desired(p_com_supp_desired, Rz(theta_torso_supp_t));
 
   double s = 1.0;
+  const double swing_delay_rate = 0.0;
+  double s_0 = swing_foot_timing_law_ptr_->eval(single_support_duration_ * swing_delay_rate);
+  double s_f = swing_foot_timing_law_ptr_->eval(single_support_duration_ * (1.0 - swing_delay_rate));
   if (t < single_support_duration_) s = swing_foot_timing_law_ptr_->eval(t);
-  auto T_swing_w_desired = swing_foot_geometric_path(s);
+  auto T_swing_w_desired = swing_foot_geometric_path(s, s_0, s_f);
   auto T_swing_supp_desired = T_supp_w_t0.inv() * T_swing_w_desired;
 
   Pose T_left_torso_desired;

@@ -224,8 +224,8 @@ class Walk2014Generator : public Walk2014GeneratorBase
 
   double com_target_height_ = 0.22;
   double mpc_foot_constraint_size_ = 0.05;
-  double single_support_duration_ = 0.3;
-  double double_support_duration_ = 0.2;
+  double single_support_duration_ = 0.4;
+  double double_support_duration_ = 0.25;
   double mpc_timestep_ = 0.05;
   double controller_timestep_ = 0.01;
   int delay_ = 500; // 5 s delay.
@@ -245,7 +245,7 @@ class Walk2014Generator : public Walk2014GeneratorBase
   bool waiting_footstep_plan_ = false;
 
   // Change N_ to modify prediction horizon.
-  static constexpr int N_ = 20;
+  static constexpr int N_ = 26;
   // Do not modify the following.
   static constexpr int numVariables_ = N_ * 3;
   static constexpr int numEqualityConstraints_ = 3;
@@ -305,7 +305,7 @@ class Walk2014Generator : public Walk2014GeneratorBase
 
   void footstepPlanCallback(const FootstepPlan& footstep_plan);
 
-  Pose swing_foot_geometric_path(double s) {
+  Pose swing_foot_geometric_path(double s, double s_0=0.0, double s_f=1.0) {
     Eigen::Vector4d T0, Tf;
     T0 = starting_configuration_.getSwingFootConfiguration();
     if (walking_state_ == WalkingState::Standing ||
@@ -322,8 +322,6 @@ class Walk2014Generator : public Walk2014GeneratorBase
     double a = (h_z - z0 + s_h * (z0 - zf)) / (s_h * (s_h - 1.0));
     double b = zf - z0 - a;
     double c = z0;
-    double s_0 = 0.0;
-    double s_f = 1.0;
     double s_bar = (s - s_0) / (s_f - s_0);
     double swing_x = T0.x() + (Tf.x() - T0.x()) * s_bar;
     double swing_y = T0.y() + (Tf.y() - T0.y()) * s_bar;
