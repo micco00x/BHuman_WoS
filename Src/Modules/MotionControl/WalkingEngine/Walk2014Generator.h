@@ -222,10 +222,10 @@ class Walk2014Generator : public Walk2014GeneratorBase
     Eigen::Matrix3d orientation;
   };
 
-  double com_target_height_ = 0.22;
+  double com_target_height_ = 0.20;
   double mpc_foot_constraint_size_ = 0.05;
-  double single_support_duration_ = 0.4;
-  double double_support_duration_ = 0.25;
+  double single_support_duration_ = 0.3;
+  double double_support_duration_ = 0.2;
   double mpc_timestep_ = 0.05;
   double controller_timestep_ = 0.01;
   int delay_ = 500; // 5 s delay.
@@ -245,7 +245,7 @@ class Walk2014Generator : public Walk2014GeneratorBase
   bool waiting_footstep_plan_ = false;
 
   // Change N_ to modify prediction horizon.
-  static constexpr int N_ = 26;
+  static constexpr int N_ = 20;
   // Do not modify the following.
   static constexpr int numVariables_ = N_ * 3;
   static constexpr int numEqualityConstraints_ = 3;
