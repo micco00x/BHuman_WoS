@@ -110,12 +110,12 @@ Walk2014Generator::Walk2014Generator() {
   );
 
   // Setup swing foot timing law:
-  //swing_foot_timing_law_ptr_ =
-  //    std::make_shared<labrob::LinearTimingLaw>(single_support_duration_);
   swing_foot_timing_law_ptr_ =
-      std::make_shared<labrob::TrapezoidalAccelerationTimingLaw>(
-          single_support_duration_, 0.4
-      );
+      std::make_shared<labrob::LinearTimingLaw>(single_support_duration_);
+  //swing_foot_timing_law_ptr_ =
+  //    std::make_shared<labrob::TrapezoidalAccelerationTimingLaw>(
+  //        single_support_duration_, 0.05
+  //    );
 
   // Setup MPC solver:
   const Eigen::Vector3d& p_lsole_w = T_lsole_w.position;
@@ -366,11 +366,13 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
   double t = controller_timestep_ * (control_iter_ + 1) + mpc_timestep_ * mpc_iter_;
 
   // Compute desired orientation of the torso:
-  double theta_torso_supp_tf = angle_difference(
-      target_configuration_.getSupportFootConfiguration().w(),
-      target_configuration_.getSwingFootConfiguration().w()) / 2.0;
-  double theta_torso_supp_t = theta_torso_supp_tf * t /
-      (single_support_duration_ + double_support_duration_);
+  double s_torso = t /(single_support_duration_ + double_support_duration_);
+  double theta_torso_t0 = (starting_configuration_.getSupportFootConfiguration().w() + starting_configuration_.getSwingFootConfiguration().w()) / 2.0;
+  double theta_torso_tf = (target_configuration_.getSupportFootConfiguration().w() + target_configuration_.getSwingFootConfiguration().w()) / 2.0;
+  double theta_torso_supp_t0 = angle_difference(theta_torso_t0, starting_configuration_.getSupportFootConfiguration().w());
+  double theta_torso_supp_tf = angle_difference(theta_torso_tf, starting_configuration_.getSupportFootConfiguration().w());
+  double theta_torso_supp_t = theta_torso_supp_t0 +
+      angle_difference(theta_torso_supp_tf, theta_torso_supp_t0) * s_torso;
 
   Pose T_torso_supp_desired(p_com_supp_desired, Rz(theta_torso_supp_t));
 
