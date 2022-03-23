@@ -43,6 +43,13 @@
 
 #pragma once
 
+// STL
+#include <deque>
+#include <functional>
+#include <memory>
+#include <mutex>
+
+// BHuman
 #include "Representations/Configuration/GlobalOptions.h"
 #include "Representations/Configuration/MassCalibration.h"
 #include "Representations/Configuration/RobotDimensions.h"
@@ -57,6 +64,13 @@
 #include "Tools/Module/Module.h"
 #include "Tools/RingBufferWithSum.h"
 #include "Tools/RobotParts/Legs.h"
+
+// MPC
+#include "MPCSolver.hpp"
+
+#include "Configuration.hpp"
+#include "TCPClient.hpp"
+#include "TimingLaw.hpp"
 
 MODULE(Walk2014Generator,
 {,
@@ -121,6 +135,12 @@ MODULE(Walk2014Generator,
 
 class Walk2014Generator : public Walk2014GeneratorBase
 {
+ public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  Walk2014Generator();
+
+ private:
+
   enum WalkState
   {
     standing,
@@ -159,6 +179,171 @@ class Walk2014Generator : public Walk2014GeneratorBase
   int slowWeightShifts; /**< How often took the weight shift significantly longer in a row? */
   float torsoTilt; /**< The current tilt of the torso (in radians). */
   unsigned timeWhenStandBegan = 0; /**< The time when stand began (in ms). */
+
+  /*! State of the robot regarding walking phases. */
+  enum class WalkingState {
+    Standing, /*!< The robot is standing, no footstep plan to execute. */
+    Starting, /*!< A footstep plan is available, moving equilibrium from static to dynamic. */
+    Walking, /*!< Single and double support phases, keep ZMP within support polygon. */
+    Stopping, /*!< Similar to double support phase, but executing last element of footstep plan. */
+    Stopped /*!< Discard footstep plans. Robot does not move anymore. */
+  };
+
+  class Pose {
+   public:
+    Pose() :
+        position(Eigen::Vector3d::Zero()),
+        orientation(Eigen::Matrix3d::Identity()) {
+
+    }
+
+    Pose(const Eigen::Vector3d& p, const Eigen::Matrix3d& R) :
+        position(p), orientation(R) {
+
+    }
+
+    Pose operator*(const Pose& pose) const {
+      return Pose(
+          orientation * pose.position + position,
+          orientation * pose.orientation);
+    }
+
+    Eigen::Vector3d operator*(const Eigen::Vector3d& p) {
+      return orientation * p + position;
+    }
+
+    Pose inv() const {
+      return Pose(
+          -orientation.transpose() * position,
+          orientation.transpose());
+    }
+
+    Eigen::Vector3d position;
+    Eigen::Matrix3d orientation;
+  };
+
+  double com_target_height_ = 0.20;
+  double mpc_foot_constraint_size_ = 0.05;
+  double single_support_duration_ = 0.3;
+  double double_support_duration_ = 0.2;
+  double mpc_timestep_ = 0.05;
+  double controller_timestep_ = 0.01;
+  int delay_ = 500; // 5 s delay.
+
+  int S_ = static_cast<int>(std::round(single_support_duration_ / mpc_timestep_));
+  int D_ = static_cast<int>(std::round(double_support_duration_ / mpc_timestep_));
+
+  int control_iter_ = 0;
+  int mpc_iter_ = 0;
+
+  WalkingState walking_state_ = WalkingState::Standing;
+  Configuration starting_configuration_;
+  Configuration target_configuration_;
+  std::shared_ptr<labrob::TimingLaw> swing_foot_timing_law_ptr_;
+  std::function<Pose(double)> swing_foot_trajectory_;
+  FootstepPlan footstep_plan_;
+  bool waiting_footstep_plan_ = false;
+
+  // Change N_ to modify prediction horizon.
+  static constexpr int N_ = 20;
+  // Do not modify the following.
+  static constexpr int numVariables_ = N_ * 3;
+  static constexpr int numEqualityConstraints_ = 3;
+  static constexpr int numInequalityConstraints_ = N_ * 3;
+  std::shared_ptr<mpcSolver::MPCSolver<numVariables_, numEqualityConstraints_, numInequalityConstraints_>> mpc_solver_ptr_;
+  std::vector<Eigen::VectorXd> mpc_plan_;
+
+  std::string ip_addr_ = "127.0.0.1";
+  const int port_ = 1999;
+  TCPClient tcp_client_;
+  std::mutex footstepPlanMutex_;
+
+  template <class T>
+  Eigen::Matrix<T, 2, 2>
+  Rz_planar(T theta) {
+    T c = std::cos(theta);
+    T s = std::sin(theta);
+    Eigen::Matrix<T, 2, 2> R;
+    R << c, -s,
+        s,  c;
+    return R;
+  }
+
+  Eigen::Matrix3d Rz(double theta) {
+    Eigen::Matrix3d R;
+    double ctheta = std::cos(theta);
+    double stheta = std::sin(theta);
+    R << ctheta, -stheta, 0.0,
+        stheta,  ctheta, 0.0,
+            0.0,     0.0, 1.0;
+    return R;
+  }
+
+  template <class T>
+  T
+  angle_difference(T alpha, T beta) {
+    Eigen::Matrix<T, 2, 2> R_diff = Rz_planar<T>(alpha - beta);
+    return std::atan2(R_diff(1, 0), R_diff(0, 0));
+  }
+
+  Eigen::Vector4d T_inv(const Eigen::Vector4d& T) {
+    Eigen::Vector3d p = T.head<3>();
+    Eigen::Matrix3d RzT = Rz(-T.w());
+    Eigen::Vector4d T_r;
+    T_r << -RzT * p, -T.w();
+    return T_r;
+  }
+
+  Eigen::Vector4d T_mul(const Eigen::Vector4d& T1, const Eigen::Vector4d& T2) {
+    Eigen::Matrix3d R1 = Rz(T1.w());
+    Eigen::Vector3d p1 = T1.head<3>();
+    Eigen::Vector3d p2 = T2.head<3>();
+    Eigen::Vector4d T_r;
+    T_r << R1 * p2 + p1, T1.w() + T2.w();
+    return T_r;
+  }
+
+  void footstepPlanCallback(const FootstepPlan& footstep_plan);
+
+  Pose swing_foot_geometric_path(double s, double s_0=0.0, double s_f=1.0) {
+    Eigen::Vector4d T0, Tf;
+    T0 = starting_configuration_.getSwingFootConfiguration();
+    if (walking_state_ == WalkingState::Standing ||
+        walking_state_ == WalkingState::Starting ||
+        walking_state_ == WalkingState::Stopped) {
+      Tf = starting_configuration_.getSwingFootConfiguration();
+    } else {
+      Tf = target_configuration_.getSupportFootConfiguration();
+    }
+    double h_z = target_configuration_.h_z_;
+    double s_h = 0.5;
+    double z0 = T0.z();
+    double zf = Tf.z();
+    double a = (h_z - z0 + s_h * (z0 - zf)) / (s_h * (s_h - 1.0));
+    double b = zf - z0 - a;
+    double c = z0;
+    double s_bar = (s - s_0) / (s_f - s_0);
+    double swing_x = T0.x() + (Tf.x() - T0.x()) * s_bar;
+    double swing_y = T0.y() + (Tf.y() - T0.y()) * s_bar;
+    double swing_z = a * s * s + b * s + c;
+    double swing_theta = T0.w() + angle_difference(Tf.w(), T0.w()) * s_bar;
+    if (s_0 <= s && s <= s_f) {
+      return Pose(
+          Eigen::Vector3d(swing_x, swing_y, swing_z),
+          Rz(swing_theta)
+      );
+    } else if (s < s_0) {
+      return Pose(
+          Eigen::Vector3d(T0.x(), T0.y(), swing_z),
+          Rz(T0.w())
+      );
+    } else {
+      return Pose(
+          Eigen::Vector3d(Tf.x(), Tf.y(), swing_z),
+          Rz(Tf.w())
+      );
+    }
+  }
 
   /**
    * This method is called when the representation provided needs to be updated.

@@ -60,9 +60,119 @@
 #include "Tools/Range.h"
 #include <algorithm>
 
+#include <chrono>
+#include <iostream>
+#include <fstream>
+
 MAKE_MODULE(Walk2014Generator, motionControl);
 
-static const float mmPerM = 1000.f;
+static const double mmPerM = 1000.0;
+
+std::ifstream ip_addr_file("/tmp/footstep_planner_ip_addr.txt");
+std::ifstream init_file("/tmp/init.txt");
+std::ofstream com_file("/tmp/com.txt");
+std::ofstream zmp_file("/tmp/zmp.txt");
+std::ofstream lsole_file("/tmp/lsole.txt");
+std::ofstream rsole_file("/tmp/rsole.txt");
+std::ofstream supp_file("/tmp/supp.txt");
+
+Walk2014Generator::Walk2014Generator() {
+  double x_torso_init = 0.0, y_torso_init = 0.0;
+  double z_torso_init = 0.24809; // taken from http://doc.aldebaran.com/2-1/family/robots/links_robot.html
+  double yaw_torso_init = 0.0;
+  // Read init data if file has been opened successfully:
+  if (init_file) {
+    init_file >> x_torso_init >> y_torso_init >> z_torso_init >> yaw_torso_init;
+  }
+  Pose T_torso_w = Pose(
+      Eigen::Vector3d(x_torso_init, y_torso_init, z_torso_init),
+      Rz(yaw_torso_init)
+  );
+  Eigen::Vector3d p_lsole_torso = Eigen::Vector3d(0.0, 0.05, -z_torso_init);
+  Eigen::Matrix3d R_lsole_torso = Eigen::Matrix3d::Identity();
+  Eigen::Vector3d p_rsole_torso = Eigen::Vector3d(0.0, -0.05, -z_torso_init);
+  Eigen::Matrix3d R_rsole_torso = Eigen::Matrix3d::Identity();
+  Pose T_lsole_torso(p_lsole_torso, R_lsole_torso);
+  Pose T_rsole_torso(p_rsole_torso, R_rsole_torso);
+  Pose T_lsole_w = T_torso_w * T_lsole_torso;
+  Pose T_rsole_w = T_torso_w * T_rsole_torso;
+
+  Eigen::Vector4d qL_init, qR_init;
+  qL_init << T_lsole_w.position, T_lsole_w.orientation.eulerAngles(2, 1, 0).x();
+  qR_init << T_rsole_w.position, T_rsole_w.orientation.eulerAngles(2, 1, 0).x();
+  std::cerr << "qL_init: " << qL_init.transpose() << std::endl;
+  std::cerr << "qR_init: " << qR_init.transpose() << std::endl;
+  starting_configuration_ = Configuration(
+    qL_init,
+    qR_init,
+    Foot::RIGHT,
+    0.0
+  );
+
+  // Setup swing foot timing law:
+  swing_foot_timing_law_ptr_ =
+      std::make_shared<labrob::LinearTimingLaw>(single_support_duration_);
+  //swing_foot_timing_law_ptr_ =
+  //    std::make_shared<labrob::TrapezoidalAccelerationTimingLaw>(
+  //        single_support_duration_, 0.05
+  //    );
+
+  // Setup MPC solver:
+  const Eigen::Vector3d& p_lsole_w = T_lsole_w.position;
+  const Eigen::Vector3d& p_rsole_w = T_rsole_w.position;
+  Eigen::Vector3d p_zmp_w = (p_lsole_w + p_rsole_w) / 2.0;
+  Eigen::Vector3d p_com_w =
+      p_zmp_w + Eigen::Vector3d(0.0, 0.0, com_target_height_);
+  mpc_solver_ptr_ = std::make_shared<mpcSolver::MPCSolver<
+      numVariables_, numEqualityConstraints_, numInequalityConstraints_>>(
+    mpc_timestep_,
+    controller_timestep_,
+    single_support_duration_,
+    double_support_duration_,
+    com_target_height_,
+    mpc_foot_constraint_size_,
+    p_com_w,
+    p_zmp_w
+  );
+
+  // Read IP address from file if available:
+  if (ip_addr_file) {
+    ip_addr_file >> ip_addr_;
+  }
+
+  std::cerr << "Connecting to server (ip addr=" << ip_addr_ << ", port=" << port_ << ")..." << std::endl;
+  if (tcp_client_.connectToServer(ip_addr_.c_str(), port_)) {
+    tcp_client_.subscribeToFootstepPlan(&Walk2014Generator::footstepPlanCallback, this);
+  } else {
+    std::cerr << "Cannot connect to server." << std::endl;
+  }
+  std::cerr << "Done." << std::endl;
+}
+
+void
+Walk2014Generator::footstepPlanCallback(const FootstepPlan& footstep_plan) {
+  const std::lock_guard<std::mutex> lock(footstepPlanMutex_);
+  
+  waiting_footstep_plan_ = false;
+
+  if (!target_configuration_.isApprox(footstep_plan.front())) {
+    std::cerr << "[WARN]: received footstep plan is not coherent with target configuration" << std::endl;
+    std::cerr << "\ttarget: " << target_configuration_.to_string() << std::endl;
+    std::cerr << "\tfront: " << footstep_plan.front().to_string() << std::endl;
+    return;
+  }
+
+  std::cerr << "Footstep plan received:" << std::endl;
+  for (const auto& configuration : footstep_plan) {
+    std::cerr << configuration.to_string() << std::endl;
+  }
+
+  footstep_plan_ = footstep_plan;
+  if (walking_state_ == WalkingState::Walking ||
+      walking_state_ == WalkingState::Stopping) {
+    footstep_plan_.push_front(starting_configuration_);
+  }
+}
 
 void Walk2014Generator::update(WalkGenerator& generator)
 {
@@ -126,465 +236,235 @@ void Walk2014Generator::calcJoints(WalkGenerator& generator,
                                    WalkGenerator::WalkMode walkMode,
                                    const std::function<Pose3f(float phase)>& getKickFootOffset)
 {
-  // 1. Read in new walk values (forward, left, turn, power) only at the start of a walk step cycle, ie when t = 0
-  if(generator.t == 0)
-    calcNextStep(generator, speed, target, walkMode);
+  std::chrono::time_point<std::chrono::system_clock> kc_t0 = std::chrono::system_clock::now();
 
-  // 2. Update timer
-  generator.t += Constants::motionCycleTime;
+  const std::lock_guard<std::mutex> lock(footstepPlanMutex_);
 
-  // 3. Determine Walk2014 Option
-  if(walkState != standing && forward == 0 && left == 0 && turn == 0)
-    walkState = stopping;
-  else if(walkState != walking && (forward != 0 || left != 0 || turn != 0))
-    walkState = starting;
-
-  // 5. Determine walk variables throughout the walk step phase
-  float foothL;
-  float foothR;
-  if(walkState == standing)
-  {
-    generator.stepDuration = generator.t = 0.f;
-    foothL = foothR = 0;
-  }
-  else
-  {
-    // 5.3 Calculate intra-walkphase forward, left and turn at time-step dt
-    if(generator.isLeftPhase)
-      calcFootOffsets(generator, 1.f, forwardL0, forwardR0, forwardL, forwardR, leftL, leftR, foothL, foothR);
-    else
-      calcFootOffsets(generator, -1.f, forwardR0, forwardL0, forwardR, forwardL, leftR, leftL, foothR, foothL);
-
-    // 5.4 Special conditions when priming the walk
-    if(walkState == starting)
-    {
-      foothL *= footLiftFirstStepFactor; // reduce max lift due to short duration
-      foothR *= footLiftFirstStepFactor;
-      forwardL = forwardR = 0; // don't move on starting
-      leftR = leftL = 0;
-      turnRL = 0;
-      generator.speed = Pose2f();
-      if(left != 0.f) // make first real step in direction of movement
-        generator.isLeftPhase = left > 0;
+  if (control_iter_ == 0) {
+    // Update walking state:
+    if (mpc_iter_ == 0 && walking_state_ == WalkingState::Standing &&
+        footstep_plan_.size() > 1 && !delay_) {
+      walking_state_ = WalkingState::Starting;
+      starting_configuration_ = footstep_plan_.front();
+    } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Starting) {
+      walking_state_ = WalkingState::Walking;
+    } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Walking) {
+      footstep_plan_.pop_front();
+      starting_configuration_ = footstep_plan_.front();
+    } else if (mpc_iter_ == S_ && walking_state_ == WalkingState::Walking) {
+      if (footstep_plan_.size() <= 2) {
+        walking_state_ = WalkingState::Stopping;
+      }
+    } else if (mpc_iter_ == 0 && walking_state_ == WalkingState::Stopping) {
+      footstep_plan_.pop_front();
+      starting_configuration_ = footstep_plan_.front();
+      walking_state_ = WalkingState::Stopped;
+      footstep_plan_.clear();
     }
   }
 
-  // 8. Odometry update for localization
-  generator.odometryOffset = calcOdometryOffset(generator.isLeftPhase);
+  std::string walking_state_str;
+  if (walking_state_ == WalkingState::Standing) {
+    walking_state_str = "Standing";
+  } else if (walking_state_ == WalkingState::Starting) {
+    walking_state_str = "Starting";
+  } else if (walking_state_ == WalkingState::Walking) {
+    walking_state_str = "Walking";
+  } else if (walking_state_ == WalkingState::Stopping) {
+    walking_state_str = "Stopping";
+  } else if (walking_state_ == WalkingState::Stopped) {
+    walking_state_str = "Stopped";
+  } else {
+    // NOTE: execution should never get here.
+    walking_state_str = "Unknown";
+  }
 
-  // 9.1 Foot poses
-  Pose3f leftFoot = Pose3f(0, theRobotDimensions.yHipOffset, 0)
-                    .rotateX(-leftL)
-                    .translate(-forwardL * mmPerM - torsoOffset, 0, -(walkHipHeight - theRobotDimensions.footHeight - foothL * mmPerM) / std::cos(leftL))
-                    .rotateX(leftL).rotateZ(turnRL).translate(0, 0, -theRobotDimensions.footHeight);
-  Pose3f rightFoot = Pose3f(0, -theRobotDimensions.yHipOffset, 0)
-                     .rotateX(-leftR)
-                     .translate(-forwardR * mmPerM - torsoOffset, 0, -(walkHipHeight - theRobotDimensions.footHeight - foothR * mmPerM) / std::cos(leftR))
-                     .rotateX(leftR).rotateZ(-turnRL).translate(0, 0, -theRobotDimensions.footHeight);
+  // Update walking data:
+  if (mpc_iter_ == 0 && control_iter_ == 0) {
+    // Retrieve data from footstep plan:
+    if (walking_state_ == WalkingState::Walking && footstep_plan_.size() >= 2) {
+      target_configuration_ = footstep_plan_[1];
+    } else {
+      target_configuration_ = starting_configuration_;
+      target_configuration_.setSwingFootTrajectoryHeight(0.0);
+    }
 
-  // 9.2 Walk kicks
-  if(getKickFootOffset)
-    (generator.isLeftPhase ? leftFoot : rightFoot).conc(getKickFootOffset(std::min(generator.t / generator.stepDuration, 1.f)));
+    // Send target configuration to footstep planner:
+    if (walking_state_ != WalkingState::Stopped && !waiting_footstep_plan_) {
+      if (tcp_client_.sendConfiguration(target_configuration_) ) {
+        waiting_footstep_plan_ = true;
+        std::cerr << "Sending: " << target_configuration_.to_string() << std::endl;
+      } else {
+        std::cerr << "Cannot send configuration to footstep planner." << std::endl;
+      }
+    }
+  }
+
+  const auto& qSupport = starting_configuration_.getSupportFootConfiguration();
+  const auto& qSwing = starting_configuration_.getSwingFootConfiguration();
+  const auto& qTarget = target_configuration_.getSupportFootConfiguration();
+  // Update MPC params:
+  Eigen::Vector4d qMiddle = (qSupport + qSwing) / 2.0;
+  if (walking_state_ == WalkingState::Standing ||
+      walking_state_ == WalkingState::Stopped) {
+    mpc_plan_.clear();
+    mpc_plan_.push_back(qMiddle);
+    mpc_plan_.push_back(qMiddle);
+    mpc_plan_.push_back(qMiddle);
+  } else if (walking_state_ == WalkingState::Starting) {
+    mpc_plan_.clear();
+    if (footstep_plan_.size() >= 2) {
+      mpc_plan_.push_back(qMiddle);
+      mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
+      mpc_plan_.push_back(footstep_plan_[1].getSupportFootConfiguration());
+    } else if (footstep_plan_.size() >= 1) {
+      mpc_plan_.push_back(qMiddle);
+      mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
+      mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
+    } else {
+      mpc_plan_.push_back(qMiddle);
+      mpc_plan_.push_back(qMiddle);
+      mpc_plan_.push_back(qMiddle);
+    }
+  } else if (walking_state_ == WalkingState::Walking) {
+    mpc_plan_.clear();
+    if (footstep_plan_.size() >= 3) {
+      mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
+      mpc_plan_.push_back(footstep_plan_[1].getSupportFootConfiguration());
+      mpc_plan_.push_back(footstep_plan_[2].getSupportFootConfiguration());
+    } else if (footstep_plan_.size() >= 2) {
+      const auto& qSupportFinal = footstep_plan_[1].getSupportFootConfiguration();
+      const auto& qSwingFinal   = footstep_plan_[1].getSwingFootConfiguration();
+      Eigen::Vector4d qMiddleFinal = (qSupportFinal + qSwingFinal) / 2.0;
+      mpc_plan_.push_back(footstep_plan_[0].getSupportFootConfiguration());
+      mpc_plan_.push_back(qMiddleFinal);
+      mpc_plan_.push_back(qMiddleFinal);
+    }
+  }
+      
+  //std::cerr << "WalkingState::" << walking_state_str << std::endl;
+  //std::cerr << "\tcontrol iter=" << control_iter_ << std::endl;
+  //std::cerr << "\tmpc iter=" << mpc_iter_ << std::endl;
+  //std::cerr << "\tstarting configuration: " << starting_configuration_.to_string() << std::endl;
+  //std::cerr << "\ttarget configuration: " << target_configuration_.to_string() << std::endl;
+
+  std::chrono::time_point<std::chrono::system_clock> t0 = std::chrono::system_clock::now();
+  mpc_solver_ptr_->solve(mpc_plan_);
+  std::chrono::time_point<std::chrono::system_clock> tf = std::chrono::system_clock::now();
+  std::chrono::duration<double> elapsed_seconds = tf - t0;
+  //std::cerr << "MPC solved in " << elapsed_seconds.count() << std::endl;
+
+  // Compute pose of support and swing foot:
+  const auto& p_com_w_desired = mpc_solver_ptr_->getOptimalCoMPosition();
+  const auto& p_zmp_w_desired = mpc_solver_ptr_->getOptimalZMPPosition();
+  Pose T_supp_w_t0(
+      starting_configuration_.getSupportFootConfiguration().head<3>(),
+      Rz(starting_configuration_.getSupportFootConfiguration().w())
+  );
+  Eigen::Vector3d p_com_supp_desired = T_supp_w_t0.inv() * p_com_w_desired;
+
+  double t = controller_timestep_ * (control_iter_ + 1) + mpc_timestep_ * mpc_iter_;
+
+  // Compute desired orientation of the torso:
+  double s_torso = t /(single_support_duration_ + double_support_duration_);
+  double theta_torso_t0 = (starting_configuration_.getSupportFootConfiguration().w() + starting_configuration_.getSwingFootConfiguration().w()) / 2.0;
+  double theta_torso_tf = (target_configuration_.getSupportFootConfiguration().w() + target_configuration_.getSwingFootConfiguration().w()) / 2.0;
+  double theta_torso_supp_t0 = angle_difference(theta_torso_t0, starting_configuration_.getSupportFootConfiguration().w());
+  double theta_torso_supp_tf = angle_difference(theta_torso_tf, starting_configuration_.getSupportFootConfiguration().w());
+  double theta_torso_supp_t = theta_torso_supp_t0 +
+      angle_difference(theta_torso_supp_tf, theta_torso_supp_t0) * s_torso;
+
+  Pose T_torso_supp_desired(p_com_supp_desired, Rz(theta_torso_supp_t));
+
+  double s = 1.0;
+  const double swing_delay_rate = 0.1;
+  double s_0 = swing_foot_timing_law_ptr_->eval(single_support_duration_ * swing_delay_rate);
+  double s_f = swing_foot_timing_law_ptr_->eval(single_support_duration_ * (1.0 - swing_delay_rate));
+  if (t < single_support_duration_) s = swing_foot_timing_law_ptr_->eval(t);
+  auto T_swing_w_desired = swing_foot_geometric_path(s, s_0, s_f);
+  auto T_swing_supp_desired = T_supp_w_t0.inv() * T_swing_w_desired;
+
+  Pose T_left_torso_desired;
+  Pose T_right_torso_desired;
+
+  if (starting_configuration_.getSupportFoot() == Foot::LEFT) {
+    T_left_torso_desired = T_torso_supp_desired.inv();
+    T_right_torso_desired = T_left_torso_desired * T_swing_supp_desired;
+  } else {
+    T_right_torso_desired = T_torso_supp_desired.inv();
+    T_left_torso_desired  = T_right_torso_desired * T_swing_supp_desired;
+  }
+
+  // Setup data for IK:
+  Eigen::Matrix3f R_left_torso = T_left_torso_desired.orientation.cast<float>();
+  Eigen::Vector3f p_left_torso = T_left_torso_desired.position.cast<float>() * mmPerM;
+  Eigen::Matrix3f R_right_torso = T_right_torso_desired.orientation.cast<float>();
+  Eigen::Vector3f p_right_torso = T_right_torso_desired.position.cast<float>() * mmPerM;
+  Pose3f leftFoot  = Pose3f(R_left_torso, p_left_torso);
+  Pose3f rightFoot = Pose3f(R_right_torso, p_right_torso);
+
+  // Log data:
+  com_file << p_com_w_desired.transpose() << std::endl;
+  zmp_file << p_zmp_w_desired.transpose() << std::endl;
+  lsole_file << T_left_torso_desired.position.transpose() << std::endl;
+  rsole_file << T_right_torso_desired.position.transpose() << std::endl;
+  if (control_iter_ == 0 && mpc_iter_ == 0) supp_file << T_supp_w_t0.position.transpose() << " " << T_supp_w_t0.orientation.eulerAngles(2, 1, 0).x() << std::endl;
+
+  // Update state of iters:
+  control_iter_ = (control_iter_ + 1) %
+      ((int) std::round(mpc_timestep_ / controller_timestep_));
+  if (delay_) --delay_;
+  if (control_iter_ == 0) {
+    mpc_iter_ = (mpc_iter_ + 1) % (S_ + D_);
+  }
+
+  /****************************************************************************/
 
   // 9.3 Inverse kinematics
   VERIFY(InverseKinematic::calcLegJoints(leftFoot, rightFoot, Vector2f::Zero(), generator.jointRequest, theRobotDimensions) || SystemCall::getMode() == SystemCall::logfileReplay);
 
   // 10. Set joint values and stiffness
-  int stiffness = walkState == standing && theFrameInfo.getTimeSince(timeWhenStandBegan) > standStiffnessDelay ? StiffnessData::useDefault : walkStiffness;
+  int stiffness = walking_state_ == WalkingState::Standing ? StiffnessData::useDefault : walkStiffness;
   for(uint8_t i = Joints::firstLegJoint; i < Joints::numOfJoints; ++i)
     generator.jointRequest.stiffnessData.stiffnesses[i] = stiffness;
 
-  // 10.1 Arms
-  for(int joint = Joints::lShoulderPitch; joint < Joints::firstLegJoint; ++joint)
-  {
-    generator.jointRequest.angles[joint] = 0_deg;
-    generator.jointRequest.stiffnessData.stiffnesses[joint] = StiffnessData::useDefault;
-  }
-
-  // 5.5 "natural" arm swing while walking to counterbalance foot swing
-  generator.jointRequest.angles[Joints::lShoulderPitch] = 90_deg - forwardL * armShoulderPitchFactor;
-  generator.jointRequest.angles[Joints::rShoulderPitch] = 90_deg - forwardR * armShoulderPitchFactor;
-  generator.jointRequest.angles[Joints::lShoulderRoll] = armShoulderRoll + std::abs(left) * armShoulderRollIncreaseFactor;
-  generator.jointRequest.angles[Joints::rShoulderRoll] = -generator.jointRequest.angles[Joints::lShoulderRoll];
-
-  // Compensate arm position's effect on COM by tilting torso
-  compensateArmPosition(leftFoot, rightFoot, generator.jointRequest);
+  // Arm Swing
+  generator.jointRequest.angles[Joints::lShoulderRoll] =  30_deg/2.0f;
+  generator.jointRequest.angles[Joints::rShoulderRoll] = -30_deg/2.0f;
+  generator.jointRequest.angles[Joints::lShoulderPitch] = 90_deg + 0.5f * generator.jointRequest.angles[Joints::rHipPitch];
+  generator.jointRequest.angles[Joints::rShoulderPitch] = 90_deg + 0.5f * generator.jointRequest.angles[Joints::lHipPitch];
+  generator.jointRequest.angles[Joints::lElbowRoll] =  0.5f*generator.jointRequest.angles[Joints::rHipPitch];
+  generator.jointRequest.angles[Joints::rElbowRoll] = -0.5f*generator.jointRequest.angles[Joints::lHipPitch];
+  generator.jointRequest.angles[Joints::lElbowYaw] = -90_deg;
+  generator.jointRequest.angles[Joints::rElbowYaw] =  90_deg;
+  generator.jointRequest.angles[Joints::lWristYaw] =  0_deg;
+  generator.jointRequest.angles[Joints::rWristYaw] = -0_deg;
 
   // 7. Sagittal balance
-  Angle balanceAdjustment = walkState == standing ? 0.f : filteredGyroY *
-                            (filteredGyroY > 0 ? gyroForwardBalanceFactor : gyroBackwardBalanceFactor); // adjust ankle tilt in proportion to filtered gryoY
-  generator.jointRequest.angles[generator.isLeftPhase ? Joints::rAnklePitch : Joints::lAnklePitch] += balanceAdjustment;
+  filteredGyroY = gyroLowPassRatio * filteredGyroY + (1.f - gyroLowPassRatio) * theInertialSensorData.gyro.y();
+  //Angle balanceAdjustment = walkState == standing ? 0.f : filteredGyroY *
+  //                          (filteredGyroY > 0 ? gyroForwardBalanceFactor : gyroBackwardBalanceFactor); // adjust ankle tilt in proportion to filtered gryoY
+  //generator.jointRequest.angles[generator.isLeftPhase ? Joints::rAnklePitch : Joints::lAnklePitch] += balanceAdjustment;
+  Angle balanceAdjustment = filteredGyroY * 0.05f;
+  generator.jointRequest.angles[Joints::lAnklePitch] += balanceAdjustment;
+  generator.jointRequest.angles[Joints::rAnklePitch] += balanceAdjustment;
 
   // Lateral balance
-  if(walkState == standing)
-  {
-    balanceAdjustment = filteredGyroX * gyroSidewaysBalanceFactor;
-    generator.jointRequest.angles[Joints::lAnkleRoll] += balanceAdjustment;
-    generator.jointRequest.angles[Joints::rAnkleRoll] += balanceAdjustment;
-  }
+  filteredGyroX = gyroLowPassRatio * filteredGyroX + (1.f - gyroLowPassRatio) * theInertialSensorData.gyro.x();
+  //balanceAdjustment = filteredGyroX * gyroSidewaysBalanceFactor;
+  balanceAdjustment = filteredGyroX * 0.1f;
+  generator.jointRequest.angles[Joints::lAnkleRoll] += balanceAdjustment;
+  generator.jointRequest.angles[Joints::rAnkleRoll] += balanceAdjustment;
 
   // Head can move freely
   generator.jointRequest.angles[Joints::headPitch] = generator.jointRequest.angles[Joints::headYaw] = JointAngles::ignore;
 
-  bool supportFoodSwitched = (theFootSupport.support > 0 && generator.isLeftPhase) || (theFootSupport.support < 0 && !generator.isLeftPhase);
-  // 6. Changing Support Foot. Note isLeftPhase means left foot is swing foot.
-  // t>0.75*T tries to avoid bounce, especially when side-stepping
-  // lastZMPL*ZMPL<0.0 indicates that support foot has changed
-  // t>3*T tires to get out of "stuck" situations
-  if((generator.t > supportSwitchPhaseRange.min * generator.stepDuration && supportFoodSwitched)
-     || (generator.t > supportSwitchPhaseRange.max * generator.stepDuration))
-  {
-    switchPhase = generator.t;
-    maxFootHeight0 = maxFootHeight;
-    weightShiftStatus = generator.isLeftPhase != (theFootSupport.support < 0) ? weightDidShift : weightDidNotShift;
-    generator.isLeftPhase = theFootSupport.support < 0;
-
-    if(weightShiftStatus == weightDidNotShift)
-    {
-      lastForward = lastLeft = 0;
-      if(++weightShiftMisses > maxWeightShiftMisses)
-      {
-        ANNOTATION("Walk2014Generator", "Too many weight shift misses");
-        weightShiftStatus = emergencyStep;
-        generator.isLeftPhase = !generator.isLeftPhase;
-      }
-    }
-    else
-    {
-      weightShiftMisses = 0;
-      if(switchPhase > minSlowWeightShiftRatio * generator.stepDuration)
-      {
-        if(++slowWeightShifts > maxSlowWeightShifts)
-        {
-          ANNOTATION("Walk2014Generator", "Too many slow weight shifts");
-          timeWhenSlowWeightShiftsDetected = theFrameInfo.time;
-        }
-      }
-      else
-        slowWeightShifts = 0;
-    }
-
-    if(walkState != standing)
-    {
-      // 6.1 Recover previous "left" swing angle
-      swingAngle = generator.isLeftPhase ? leftL : leftR;
-
-      // 6.2 Decide on timing of next walk step phase
-      if(walkState != walking)
-      {
-        walkState = static_cast<WalkState>((walkState + 1) & 3);
-        if(walkState == standing)
-          timeWhenStandBegan = theFrameInfo.time;
-      }
-
-      // 6.3 reset step phase time
-      generator.t = 0;
-
-      // 6.4 backup values
-      forwardL0 = forwardL;
-      forwardR0 = forwardR;
-      turnRL0 = turnRL;
-    }
-  } // end of changing support foot
-}
-
-void Walk2014Generator::calcNextStep(WalkGenerator& generator,
-                                     const Pose2f& speed,
-                                     const Pose2f& target,
-                                     WalkGenerator::WalkMode walkMode)
-{
-  Pose2f request = speed;
-  Pose2f maxSpeed = this->maxSpeed;
-  float maxSpeedBackwards = this->maxSpeedBackwards;
-  Pose2f returnOffset((generator.isLeftPhase ? -turnRL0 : turnRL0) * odometryScale.rotation,
-                      (generator.isLeftPhase ? -forwardR0 : -forwardL0) * mmPerM * odometryScale.translation.x(),
-                      (walkHipHeight - theRobotDimensions.footHeight) * std::tan(swingAngle) * odometryScale.translation.y());
-
-  if(theFrameInfo.getTimeSince(timeWhenSlowWeightShiftsDetected) <= slowWaitShiftStandDelay)
-  {
-    request = Pose2f();
-    walkMode = WalkGenerator::stepSizeMode;
-  }
-  else if(weightShiftStatus == emergencyStep)
-  {
-    request = Pose2f(0_deg, 0, generator.isLeftPhase ? emergencyStepSize : -emergencyStepSize);
-    walkMode = WalkGenerator::stepSizeMode;
-    weightShiftStatus = weightDidShift;
-  }
-
-  if(walkMode == WalkGenerator::targetMode)
-  {
-    ASSERT(speed.rotation > 0.f && speed.translation.x() > 0.f && speed.translation.y() > 0.f);
-
-    maxSpeed = Pose2f(std::min(speed.rotation / odometryScale.rotation, static_cast<float>(this->maxSpeed.rotation)),
-                      std::min(speed.translation.x() / odometryScale.translation.x(), this->maxSpeed.translation.x()),
-                      std::min(speed.translation.y() / odometryScale.translation.y(), this->maxSpeed.translation.y()));
-    maxSpeedBackwards = std::min(speed.translation.x() / odometryScale.translation.x(), this->maxSpeedBackwards);
-    // Remove the offset that will be covered just by returning the swing leg
-    forward = (target.translation.x() - returnOffset.translation.x()) / odometryScale.translation.x();
-    left = (target.translation.y() - returnOffset.translation.y()) / odometryScale.translation.y();
-    // If the leg swings in target direction, consider that the next step will move the robot the same distance again
-    if(left * (generator.isLeftPhase ? 1.f : -1.f) > 0)
-      left *= 0.5f;
-    turn = (target.rotation - returnOffset.rotation) / odometryScale.rotation;
-    generator.stepDuration = (baseWalkPeriod + sidewaysWalkPeriodIncreaseFactor * std::abs(left)) / 1000.f;
-    generator.speed = Pose2f(turn / generator.stepDuration, forward / generator.stepDuration, left / generator.stepDuration);
-    if(ellipsoidClampWalk(maxSpeed, maxSpeedBackwards, generator.speed.translation.x(), generator.speed.translation.y(), generator.speed.rotation))
-    {
-      walkMode = WalkGenerator::speedMode;
-      request = Pose2f(target.rotation * targetModeSpeedFactor, target.translation * targetModeSpeedFactor);
-    }
-    else
-    {
-      // Consider in the speed that half of the step is returning to origin
-      float turnFactor = turn * (generator.isLeftPhase ? 1.f : -1.f) > 0 ? 1.f - insideTurnRatio : insideTurnRatio;
-      float leftFactor = left * (generator.isLeftPhase ? 1.f : -1.f) > 0 ? 1.f : 0.f;
-      generator.speed = Pose2f(turnFactor * generator.speed.rotation * odometryScale.rotation + returnOffset.rotation / generator.stepDuration,
-                               0.5f * generator.speed.translation.x() * odometryScale.translation.x() + returnOffset.translation.x() / generator.stepDuration,
-                               leftFactor * left * odometryScale.translation.y() + returnOffset.translation.y() / generator.stepDuration);
-      generator.upcomingOdometryOffset = Pose2f(turnFactor * generator.speed.rotation * generator.stepDuration * odometryScale.rotation + returnOffset.rotation)
-                                         + Pose2f(0.5f * generator.speed.translation.x() * generator.stepDuration * odometryScale.translation.x() + returnOffset.translation.x(),
-                                                  leftFactor * left * generator.stepDuration * odometryScale.translation.y() + returnOffset.translation.y())
-                                         + Pose2f(turnFactor * generator.speed.rotation * generator.stepDuration * odometryScale.rotation)
-                                         + Pose2f(0.5f * generator.speed.translation.x() * generator.stepDuration * odometryScale.translation.x(),
-                                                  leftFactor * left * generator.stepDuration * odometryScale.translation.y());
-    }
-  }
-
-  if(walkMode == WalkGenerator::speedMode)
-  {
-    forward = request.translation.x() / odometryScale.translation.x();
-    left = request.translation.y() / odometryScale.translation.y();
-    turn = request.rotation / odometryScale.rotation;
-
-    // Scale back values to try to ensure stability.
-    ellipsoidClampWalk(maxSpeed, maxSpeedBackwards, forward, left, turn);
-
-    // If switching direction, first stop if new speed is not reachable through acceleration
-    if(lastForward * forward < 0.f && std::abs(lastForward) > std::abs(maxAcceleration.x()))
-      forward = 0.f;
-
-    // Limit acceleration and deceleration of forward movement
-    if(lastForward > 0.f || (lastForward == 0.f && forward > 0.f))
-      forward = lastForward + Rangef(-maxDeceleration.x(), maxAcceleration.x()).limit(forward - lastForward);
-    else
-      forward = lastForward + Rangef(-maxAcceleration.x(), maxDeceleration.x()).limit(forward - lastForward);
-
-    // If switching direction, first stop if new speed is not reachable through acceleration
-    if(lastLeft * left < 0.f && std::abs(lastLeft) > std::abs(maxAcceleration.y()))
-      left = 0.f;
-
-    // Limit acceleration and deceleration of sideways movement
-    if(lastLeft > 0.f || (lastLeft == 0.f && left > 0.f))
-      left = lastLeft + Rangef(-maxDeceleration.y(), maxAcceleration.y()).limit(left - lastLeft);
-    else
-      left = lastLeft + Rangef(-maxAcceleration.y(), maxDeceleration.y()).limit(left - lastLeft);
-
-    generator.stepDuration = (baseWalkPeriod + sidewaysWalkPeriodIncreaseFactor * std::abs(left)) / 1000.f;
-
-    // Consider in the speed that half of the step is returning to origin
-    float turnFactor = turn * (generator.isLeftPhase ? 1.f : -1.f) > 0 ? 1.f - insideTurnRatio : insideTurnRatio;
-    float leftFactor = left * (generator.isLeftPhase ? 1.f : -1.f) > 0 ? 1.f : 0.f;
-    generator.speed = Pose2f(turnFactor * turn * odometryScale.rotation + returnOffset.rotation / generator.stepDuration,
-                             0.5f * forward * odometryScale.translation.x() + returnOffset.translation.x() / generator.stepDuration,
-                             leftFactor * left * odometryScale.translation.y() + returnOffset.translation.y() / generator.stepDuration);
-    generator.upcomingOdometryOffset = Pose2f(turnFactor * turn * generator.stepDuration * odometryScale.rotation + returnOffset.rotation)
-                                       + Pose2f(0.5f * forward * generator.stepDuration * odometryScale.translation.x() + returnOffset.translation.x(),
-                                                leftFactor * left * generator.stepDuration * odometryScale.translation.y() + returnOffset.translation.y())
-                                       + Pose2f(turnFactor * turn * generator.stepDuration * odometryScale.rotation)
-                                       + Pose2f(0.5f * forward * generator.stepDuration * odometryScale.translation.x(),
-                                                leftFactor * left * generator.stepDuration * odometryScale.translation.y());
-  }
-  else if(walkMode == WalkGenerator::stepSizeMode)
-  {
-    forward = request.translation.x();
-    left = request.translation.y();
-    turn = request.rotation;
-    generator.stepDuration = (baseWalkPeriod + sidewaysWalkPeriodIncreaseFactor * std::abs(left)) / 1000.f;
-
-    // Consider in the speed that half of the step is returning to origin
-    float turnFactor = turn * (generator.isLeftPhase ? 1.f : -1.f) > 0 ? 1.f - insideTurnRatio : insideTurnRatio;
-    float leftFactor = left * (generator.isLeftPhase ? 1.f : -1.f) > 0 ? 1.f : 0.f;
-    generator.speed = Pose2f((turnFactor * turn * odometryScale.rotation + returnOffset.rotation) / generator.stepDuration,
-                             (0.5f * forward * odometryScale.translation.x() + returnOffset.translation.x()) / generator.stepDuration,
-                             (leftFactor * left * odometryScale.translation.y() + returnOffset.translation.y()) / generator.stepDuration);
-    generator.upcomingOdometryOffset = Pose2f(turnFactor * turn * odometryScale.rotation + returnOffset.rotation)
-                                       + Pose2f(0.5f * forward * odometryScale.translation.x() + returnOffset.translation.x(),
-                                                leftFactor * left * odometryScale.translation.y() + returnOffset.translation.y())
-                                       + Pose2f(turnFactor * turn * odometryScale.rotation)
-                                       + Pose2f(0.5f * forward * odometryScale.translation.x(),
-                                                leftFactor * left * odometryScale.translation.y());
-  }
-
-  if(walkMode == WalkGenerator::speedMode)
-  {
-    lastForward = forward;
-    lastLeft = left;
-
-    // 1.6 Walk Calibration
-    // The definition of forward, left and turn is the actual distance/angle traveled in one second.
-    // It is scaled down to the duration of a single step.
-    forward *= generator.stepDuration;
-    left *= generator.stepDuration;
-    turn *= generator.stepDuration;
-  }
-  else
-  {
-    lastForward = forward / generator.stepDuration;
-    lastLeft = left / generator.stepDuration;
-  }
-
-  forward /= mmPerM; // in m/s
-  left /= mmPerM; // in m/s
-
-  // 5.1 Calculate the height to lift each swing foot
-  maxFootHeight = baseFootLift / mmPerM + std::abs(forward) * (forward < 0 ? footLiftIncreaseFactorBackwards :
-                  (footLiftIncreaseFactorForwards[generator.isLeftPhase ? Legs::left : Legs::right]))
-                  + std::abs(left) * footLiftIncreaseFactorSidewards;
-}
-
-void Walk2014Generator::calcFootOffsets(WalkGenerator& generator,
-                                        float swingFootSign, float forwardSwing0, float forwardSupport0,
-                                        float& forwardSwing, float& forwardSupport, Angle& leftSwing, Angle& leftSupport,
-                                        float& footHeightSwing, float& footHeightSupport)
-{
-  if(weightShiftStatus == weightDidShift)
-  {
-    // 5.3.1 forward: steps from (previous) -forward/2 to +forward/2, i.e. the target is forward/2
-    forwardSupport = forwardSupport0 + (forward / 2.f - forwardSupport0) * Rangef::ZeroOneRange().limit(generator.t / generator.stepDuration);
-    forwardSwing = forwardSwing0 + (-forward / 2.f - forwardSwing0) * parabolicStep(generator.t, generator.stepDuration); // swing-foot follow-through
-
-    // 5.3.4 left: steps from left0 to +left in one step and from (previous) -left to 0 in the next
-    float legLength = (walkHipHeight - theRobotDimensions.footHeight) / mmPerM;
-    float left0 = std::tan(-swingAngle) * legLength;
-    leftSupport = std::atan2(left0 + ((left * swingFootSign > 0 ? left : 0.f) - left0) * Rangef::ZeroOneRange().limit(generator.t / generator.stepDuration), legLength);
-    leftSwing = -std::atan2(left0 + ((left * swingFootSign > 0 ? left : 0.f) - left0) * parabolicStep(generator.t, generator.stepDuration), legLength);
-
-    // 5.3.5 turn
-    turnRL = turnRL0 + ((turn * swingFootSign > 0 ? 1.f - insideTurnRatio : insideTurnRatio) * swingFootSign * turn - turnRL0) * Rangef::ZeroOneRange().limit(generator.t / generator.stepDuration);
-  }
-
-  // 5.3.6 determine how high to lift the swing foot off the ground
-  footHeightSwing = maxFootHeight * parabolicReturn(generator.t / generator.stepDuration); // lift swing foot
-  footHeightSupport = maxFootHeight0 * parabolicReturn((switchPhase + generator.t) / generator.stepDuration); // return support foot to 0 if it was still lifted
-}
-
-Pose2f Walk2014Generator::calcOdometryOffset(bool isLeftSwingFoot)
-{
-  // Work out incremental forward, left, and turn values for next time step
-  Pose2f offset((turnRL - prevTurn) * (isLeftSwingFoot ? 1.f : -1.f) * odometryScale.rotation,
-                (isLeftSwingFoot ? forwardR - prevForwardR : forwardL - prevForwardL) * mmPerM * odometryScale.translation.x(),
-                (walkHipHeight - theRobotDimensions.footHeight) * (isLeftSwingFoot ? std::tan(leftR) - std::tan(prevLeftR) : std::tan(leftL) - std::tan(prevLeftL)) * odometryScale.translation.y());
-
-  // backup values for next computation
-  prevTurn = turnRL;
-  prevLeftL = leftL;
-  prevLeftR = leftR;
-  prevForwardL = forwardL;
-  prevForwardR = forwardR;
-
-  return offset;
-}
-
-float Walk2014Generator::calcWalkVolume(float forward, float left, float turn) const
-{
-  return std::pow(std::pow(forward, walkVolumeTranslationExponent) + std::pow(left, walkVolumeTranslationExponent),
-                  (walkVolumeRotationExponent / walkVolumeTranslationExponent))
-         + std::pow(turn, walkVolumeRotationExponent);
-}
-
-bool Walk2014Generator::ellipsoidClampWalk(const Pose2f& maxSpeed, float maxSpeedBackwards, float& forward, float& left, Angle& turn) const
-{
-  // Values in range [-1..1]
-  float forwardAmount = forward / (forward >= 0.f ? maxSpeed.translation.x() : maxSpeedBackwards);
-  float leftAmount = left / maxSpeed.translation.y();
-  float turnAmount = turn / maxSpeed.rotation;
-  float factor = std::max(std::max(std::abs(forwardAmount), std::abs(leftAmount)), std::abs(turnAmount));
-  bool clamp = factor > 1.f;
-  if(clamp)
-  {
-    forwardAmount /= factor;
-    leftAmount /= factor;
-    turnAmount /= factor;
-  }
-
-  // see if the point we are given is already inside the allowed walk params volume
-  if(calcWalkVolume(std::abs(forwardAmount), std::abs(leftAmount), std::abs(turnAmount)) > 1.f)
-  {
-    clamp = true;
-    float scale = 0.5f;
-    float high = 1.f;
-    float low = 0.f;
-
-    // This is basically a binary search to find the point on the surface.
-    for(unsigned i = 0; i < 10; ++i)
-    {
-      // give priority to turn. keep it the same
-      if(calcWalkVolume(std::abs(forwardAmount) * scale, std::abs(leftAmount) * scale, std::abs(turnAmount)) > 1.f)
-        high = scale;
-      else
-        low = scale;
-      scale = (low + high) / 2.f;
-    }
-
-    forwardAmount *= scale;
-    leftAmount *= scale;
-  }
-  forward = (forward >= 0.f ? maxSpeed.translation.x() : maxSpeedBackwards) * forwardAmount;
-  left = maxSpeed.translation.y() * leftAmount;
-  turn = maxSpeed.rotation * turnAmount;
-  return clamp;
-}
-
-float Walk2014Generator::parabolicReturn(float f) const
-{
-  Rangef::ZeroOneRange().clamp(f);
-
-  if(f < 0.25f)
-    return 8.f * f * f;
-  else if(f < 0.75f)
-  {
-    float x = f - 0.5f;
-    return 1.f - 8.f * x * x;
-  }
-  else
-  {
-    float x = 1.f - f;
-    return 8.f * x * x;
+  // Double check kinematic controller is executed with the right frequency:
+  std::chrono::time_point<std::chrono::system_clock> kc_tf = std::chrono::system_clock::now();
+  std::chrono::duration<double> kc_elapsed_seconds = kc_tf - kc_t0;
+  double kc_delta_t = kc_elapsed_seconds.count();
+  if (kc_delta_t >= controller_timestep_) {
+    std::cerr << "[WARN]: kinematic controller took " << kc_delta_t << std::endl;
   }
 }
 
-float Walk2014Generator::parabolicStep(float time, float period) const
-{
-  float timeFraction = Rangef::ZeroOneRange().limit(time / period);
-  if(timeFraction < 0.5f)
-    return 2.f * timeFraction * timeFraction;
-  else
-    return 4.f * timeFraction - 2.f * timeFraction * timeFraction - 1.f;
-}
-
-void Walk2014Generator::compensateArmPosition(const Pose3f& leftFoot, const Pose3f& rightFoot, JointRequest& jointRequest)
-{
-  JointRequest temp = jointRequest;
-  for(int joint = 0; joint < Joints::firstArmJoint; ++joint)
-    temp.angles[joint] = theJointRequest.angles[joint] != JointRequest::off
-                         ? theJointRequest.angles[joint] : theJointAngles.angles[joint];
-  RobotModel withWalkGeneratorArms(temp, theRobotDimensions, theMassCalibration);
-  for(int joint = Joints::firstArmJoint; joint < Joints::firstLegJoint; ++joint)
-    temp.angles[joint] = theJointRequest.angles[joint] != JointRequest::off
-                         ? theJointRequest.angles[joint] : theJointAngles.angles[joint];
-  RobotModel balanced(temp, theRobotDimensions, theMassCalibration);
-
-  for(int i = 0; i < numOfComIterations; ++i)
-  {
-    Quaternionf torsoRotation = Rotation::aroundY(-torsoTilt);
-    VERIFY(InverseKinematic::calcLegJoints(leftFoot, rightFoot, torsoRotation, temp, theRobotDimensions) || SystemCall::getMode() == SystemCall::logfileReplay);
-    ForwardKinematic::calculateLegChain(Legs::left, temp, theRobotDimensions, balanced.limbs);
-    ForwardKinematic::calculateLegChain(Legs::right, temp, theRobotDimensions, balanced.limbs);
-    balanced.updateCenterOfMass(theMassCalibration);
-    Vector3f balancedCom = torsoRotation * balanced.centerOfMass;
-    torsoTilt += (balancedCom.x() - withWalkGeneratorArms.centerOfMass.x()) * pComFactor;
-  }
-  float tiltIncrease = mmPerM * (forward >= 0 ? forward* comTiltForwardIncreaseFactor : forward * comTiltBackwardIncreaseFactor);
-  VERIFY(InverseKinematic::calcLegJoints(leftFoot, rightFoot, Vector2f(0.f, tiltIncrease - torsoTilt * comTiltFactor), jointRequest, theRobotDimensions) || SystemCall::getMode() == SystemCall::logfileReplay);
-}
